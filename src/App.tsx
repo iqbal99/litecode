@@ -118,6 +118,18 @@ function App() {
           dispatch({ type: "SET_ACTIVE_TAB", tabId: state.tabs[idx].id });
         }
       }
+
+      // Ctrl+Tab / Ctrl+Shift+Tab: cycle through tabs
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        const idx = state.tabs.findIndex((t) => t.id === state.activeTabId);
+        if (idx >= 0 && state.tabs.length > 1) {
+          const next = e.shiftKey
+            ? (idx - 1 + state.tabs.length) % state.tabs.length
+            : (idx + 1) % state.tabs.length;
+          dispatch({ type: "SET_ACTIVE_TAB", tabId: state.tabs[next].id });
+        }
+      }
     },
     [state, dispatch, activeTab, openPalette]
   );
