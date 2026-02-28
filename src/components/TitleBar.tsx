@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEditor } from "../store/editorStore";
 
@@ -16,6 +16,20 @@ const winClose    = () => void getCurrentWindow().close();
 export default function TitleBar({ onOpenPalette }: TitleBarProps) {
   const { state } = useEditor();
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    if (isMac) return;
+    const appWindow = getCurrentWindow();
+    // Initialize state
+    appWindow.isMaximized().then(setIsMaximized);
+    // Listen for resize events to update maximized state
+    let unlisten: (() => void) | undefined;
+    appWindow.onResized(() => {
+      appWindow.isMaximized().then(setIsMaximized);
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
 
   const label = activeTab
     ? `${activeTab.isDirty ? "● " : ""}${activeTab.fileName}`
@@ -56,23 +70,33 @@ export default function TitleBar({ onOpenPalette }: TitleBarProps) {
         <div className="titlebar-right titlebar-right--wc">
           {/* Minimize */}
           <button className="titlebar-wc-btn" onClick={winMinimize} title="Minimize">
-            <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor" aria-hidden>
+            <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor" aria-hidden="true">
               <rect width="10" height="1" />
             </svg>
           </button>
 
           {/* Maximize / Restore */}
-          <button className="titlebar-wc-btn" onClick={winMaximize} title="Maximize">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-                 stroke="currentColor" strokeWidth="1" aria-hidden>
-              <rect x="0.5" y="0.5" width="9" height="9" />
-            </svg>
+          <button className="titlebar-wc-btn" onClick={winMaximize} title={isMaximized ? "Restore" : "Maximize"}>
+            {isMaximized ? (
+              /* Restore icon: two overlapping squares */
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                   stroke="currentColor" strokeWidth="1" aria-hidden="true">
+                <rect x="2" y="0" width="8" height="8" />
+                <polyline points="0,2 0,10 8,10" />
+              </svg>
+            ) : (
+              /* Maximize icon: single square */
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                   stroke="currentColor" strokeWidth="1" aria-hidden="true">
+                <rect x="0.5" y="0.5" width="9" height="9" />
+              </svg>
+            )}
           </button>
 
           {/* Close */}
           <button className="titlebar-wc-btn titlebar-wc-close" onClick={winClose} title="Close">
             <svg width="10" height="10" viewBox="0 0 10 10"
-                 stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden>
+                 stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
               <line x1="0" y1="0" x2="10" y2="10" />
               <line x1="10" y1="0" x2="0"  y2="10" />
             </svg>
