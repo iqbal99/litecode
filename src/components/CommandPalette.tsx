@@ -13,7 +13,7 @@ import { cycleTheme, saveSetting } from "../commands/theme";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type PaletteMode = "file" | "command" | "symbol" | "line";
+type PaletteMode = "file" | "command" | "symbol" | "line" | "text" | "lang";
 
 interface ModeEntry {
   id: string;
@@ -55,7 +55,7 @@ const MODES: ModeEntry[] = [
   {
     id: "search-text",
     prefix: "%",
-    label: "Search for Text",
+    label: "Search Text in Open Files",
     description: "%",
   },
   {
@@ -72,6 +72,12 @@ const MODES: ModeEntry[] = [
     shortcut: ["⌃", "G"],
     description: ":",
   },
+  {
+    id: "change-language",
+    prefix: "lang:",
+    label: "Change Language Mode",
+    description: "lang:",
+  },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,7 +86,8 @@ function detectMode(query: string): { mode: PaletteMode; term: string } {
   if (query.startsWith(">")) return { mode: "command", term: query.slice(1).trimStart() };
   if (query.startsWith("@")) return { mode: "symbol", term: query.slice(1) };
   if (query.startsWith(":")) return { mode: "line", term: query.slice(1) };
-  if (query.startsWith("%")) return { mode: "file", term: query.slice(1).trimStart() };
+  if (query.startsWith("%")) return { mode: "text", term: query.slice(1).trimStart() };
+  if (query.startsWith("lang:")) return { mode: "lang", term: query.slice(5) };
   return { mode: "file", term: query };
 }
 
@@ -256,6 +263,16 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
           }, 60);
         },
       },
+      {
+        id: "change-language",
+        label: "Change Language Mode…",
+        action: () => {
+          onClose();
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("litecode:open-palette", { detail: { prefill: "lang:" } }));
+          }, 60);
+        },
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.theme, state.wordWrap, state.minimap, state.fontSize, dispatch, activeTab, getEditor, onClose]
@@ -302,19 +319,57 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     if (mode !== "symbol" || !visible) { setSymbols([]); return; }
     const ed = getEditor();
     const model = ed?.getModel();
-    if (!model) return;
+    if (!model) { setSymbols([]); return; }
+
     let cancelled = false;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (model as any).getSymbols?.()?.then?.((syms: any[]) => {
-      if (cancelled) return;
-      setSymbols(
-        (syms ?? []).map((s) => ({
-          label: s.name,
-          kind: monaco.languages.SymbolKind[s.kind] ?? "Symbol",
-          range: s.range ?? s.selectionRange,
-        }))
-      );
-    }).catch(() => setSymbols([]));
+    const lang = model.getLanguageId();
+
+    if (lang === "typescript" || lang === "javascript") {
+      // Use the TypeScript worker to get navigation items (real symbol list)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tsLang = (monaco.languages as any).typescript;
+      if (!tsLang) { setSymbols([]); return; }
+
+      tsLang
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .getTypeScriptWorker()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((getWorker: (uri: monaco.Uri) => Promise<any>) => getWorker(model.uri))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((client: any) => client.getNavigationBarItems(model.uri.toString()))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((items: any[]) => {
+          if (cancelled) return;
+          const flat: SymbolItem[] = [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const flatten = (nodes: any[]) => {
+            for (const item of nodes ?? []) {
+              if (item.text && item.text !== "<global>") {
+                const span = item.spans?.[0];
+                if (span) {
+                  const pos = model.getPositionAt(span.start);
+                  flat.push({
+                    label: item.text,
+                    kind: item.kind ?? "symbol",
+                    range: {
+                      startLineNumber: pos.lineNumber,
+                      startColumn: pos.column,
+                      endLineNumber: pos.lineNumber,
+                      endColumn: pos.column,
+                    },
+                  });
+                }
+              }
+              if (item.childItems?.length) flatten(item.childItems);
+            }
+          };
+          flatten(items);
+          setSymbols(flat);
+        })
+        .catch(() => { if (!cancelled) setSymbols([]); });
+    } else {
+      setSymbols([]);
+    }
     return () => { cancelled = true; };
   }, [mode, visible, getEditor]);
 
@@ -324,12 +379,61 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     return symbols.filter((s) => s.label.toLowerCase().includes(lower));
   }, [term, symbols]);
 
+  // ── Text search in open files (% mode) ────────────────────────────────────
+  interface TextResult { tabId: string; fileName: string; lineNumber: number; lineContent: string }
+  const MAX_TEXT_SEARCH_RESULTS = 50;
+
+  const textResults = useMemo<TextResult[]>(() => {
+    if (mode !== "text" || !term) return [];
+    const lower = term.toLowerCase();
+    const results: TextResult[] = [];
+    for (const tab of state.tabs) {
+      const m = monaco.editor.getModel(monaco.Uri.parse(tab.modelUri));
+      if (!m) continue;
+      const lines = m.getLinesContent();
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(lower)) {
+          results.push({
+            tabId: tab.id,
+            fileName: tab.fileName,
+            lineNumber: i + 1,
+            lineContent: lines[i].trim().slice(0, 100),
+          });
+          if (results.length >= MAX_TEXT_SEARCH_RESULTS) return results;
+        }
+      }
+    }
+    return results;
+  }, [mode, term, state.tabs]);
+
+  // ── Language picker (lang: mode) ──────────────────────────────────────────
+  interface LangItem { id: string; name: string }
+
+  const allLanguages = useMemo<LangItem[]>(() => {
+    return monaco.languages
+      .getLanguages()
+      .map((l) => ({ id: l.id, name: (l.aliases ?? [])[0] ?? l.id }))
+      .filter((l) => l.id !== "")
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, []);
+
+  const filteredLanguages = useMemo<LangItem[]>(() => {
+    if (mode !== "lang") return [];
+    if (!term) return allLanguages.slice(0, 20);
+    const lower = term.toLowerCase();
+    return allLanguages
+      .filter((l) => l.id.toLowerCase().includes(lower) || l.name.toLowerCase().includes(lower))
+      .slice(0, 20);
+  }, [mode, term, allLanguages]);
+
   // ── Item counts for keyboard nav ───────────────────────────────────────────
   const totalItems = showModes
     ? MODES.length + Math.min(filteredFiles.length, 6)
     : mode === "command" ? filteredCommands.length
     : mode === "symbol"  ? filteredSymbols.length
     : mode === "line"    ? 1
+    : mode === "text"    ? textResults.length
+    : mode === "lang"    ? filteredLanguages.length
     : filteredFiles.length;
 
   // ── Open / close lifecycle ─────────────────────────────────────────────────
@@ -366,6 +470,32 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     });
   }, [getEditor, onClose]);
 
+  const runTextResult = useCallback((result: TextResult) => {
+    onClose();
+    requestAnimationFrame(() => {
+      dispatch({ type: "SET_ACTIVE_TAB", tabId: result.tabId });
+      // Scroll to the matching line after switching tabs
+      setTimeout(() => {
+        const ed = getEditor();
+        if (ed) {
+          ed.revealLineInCenter(result.lineNumber);
+          ed.setPosition({ lineNumber: result.lineNumber, column: 1 });
+          ed.focus();
+        }
+      }, 80);
+    });
+  }, [dispatch, getEditor, onClose]);
+
+  const runLanguage = useCallback((lang: LangItem) => {
+    if (!activeTab) { onClose(); return; }
+    const m = monaco.editor.getModel(monaco.Uri.parse(activeTab.modelUri));
+    if (m) {
+      monaco.editor.setModelLanguage(m, lang.id);
+      dispatch({ type: "SET_LANGUAGE", tabId: activeTab.id, language: lang.id });
+    }
+    onClose();
+  }, [activeTab, dispatch, onClose]);
+
   const runLineJump = useCallback(() => {
     const parts = term.split(",");
     const ln = Math.max(parseInt(parts[0]) || 1, 1);
@@ -378,10 +508,11 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
   }, [term, getEditor, onClose]);
 
   const runMode = useCallback((m: ModeEntry) => {
-    if (m.id === "goto-line")   { setQuery(":"); return; }
-    if (m.id === "goto-symbol") { setQuery("@"); return; }
-    if (m.id === "run-command") { setQuery(">"); return; }
-    if (m.id === "search-text") { setQuery("%"); return; }
+    if (m.id === "goto-line")        { setQuery(":"); return; }
+    if (m.id === "goto-symbol")      { setQuery("@"); return; }
+    if (m.id === "run-command")      { setQuery(">"); return; }
+    if (m.id === "search-text")      { setQuery("%"); return; }
+    if (m.id === "change-language")  { setQuery("lang:"); return; }
     setQuery("");
   }, []);
 
@@ -408,11 +539,14 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
         }
         if (mode === "command")  { if (filteredCommands[selected]) runCommand(filteredCommands[selected]); return; }
         if (mode === "symbol")   { if (filteredSymbols[selected])  runSymbol(filteredSymbols[selected]);   return; }
+        if (mode === "text")     { if (textResults[selected])      runTextResult(textResults[selected]);   return; }
+        if (mode === "lang")     { if (filteredLanguages[selected]) runLanguage(filteredLanguages[selected]); return; }
         if (filteredFiles[selected]) runFile(filteredFiles[selected]);
       }
     },
     [totalItems, mode, selected, showModes, filteredFiles, filteredCommands, filteredSymbols,
-     runFile, runCommand, runSymbol, runLineJump, runMode, onClose]
+     textResults, filteredLanguages,
+     runFile, runCommand, runSymbol, runLineJump, runMode, runTextResult, runLanguage, onClose]
   );
 
   if (!visible) return null;
@@ -510,7 +644,11 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
             <>
               {filteredSymbols.length === 0 && (
                 <div className="cp-empty">
-                  {term ? `No symbols match "${term}"` : "No symbols found in current file"}
+                  {term
+                    ? `No symbols match "${term}"`
+                    : activeTab && activeTab.language !== "typescript" && activeTab.language !== "javascript"
+                    ? "Symbol search is available for TypeScript and JavaScript files"
+                    : "No symbols found in current file"}
                 </div>
               )}
               {filteredSymbols.map((sym, i) => (
@@ -557,6 +695,54 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
                   <span className="cp-item-label">{f.label}</span>
                   <span className="cp-file-dir">{dirname(f.path)}</span>
                   {f.kind === "open" && <span className="cp-badge">open</span>}
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ── Text search mode (%) ── */}
+          {!showModes && mode === "text" && (
+            <>
+              {!term && (
+                <div className="cp-empty">Type a search term to find text in open files</div>
+              )}
+              {term && textResults.length === 0 && (
+                <div className="cp-empty">No matches for "{term}" in open files</div>
+              )}
+              {textResults.map((r, i) => (
+                <div
+                  key={`${r.tabId}-${r.lineNumber}`}
+                  className={`cp-item ${i === selected ? "cp-selected" : ""}`}
+                  onClick={() => runTextResult(r)}
+                  onMouseEnter={() => setSelected(i)}
+                >
+                  <span className="cp-file-icon">{getFileIcon(r.fileName)}</span>
+                  <span className="cp-item-label">{r.lineContent || <em style={{ opacity: 0.5 }}>empty line</em>}</span>
+                  <span className="cp-file-dir">{r.fileName}:{r.lineNumber}</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ── Language picker mode (lang:) ── */}
+          {!showModes && mode === "lang" && (
+            <>
+              {!activeTab && (
+                <div className="cp-empty">No file open — open a file to change its language</div>
+              )}
+              {activeTab && filteredLanguages.length === 0 && (
+                <div className="cp-empty">No languages match "{term}"</div>
+              )}
+              {activeTab && filteredLanguages.map((l, i) => (
+                <div
+                  key={l.id}
+                  className={`cp-item ${i === selected ? "cp-selected" : ""}`}
+                  onClick={() => runLanguage(l)}
+                  onMouseEnter={() => setSelected(i)}
+                >
+                  <span className="cp-item-label">{l.name}</span>
+                  <span className="cp-file-dir">{l.id}</span>
+                  {activeTab?.language === l.id && <span className="cp-badge">current</span>}
                 </div>
               ))}
             </>

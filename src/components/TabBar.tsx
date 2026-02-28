@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useEditor } from "../store/editorStore";
 import { closeTab, saveFile, saveFileAs } from "../commands/fileOps";
 
@@ -94,6 +94,13 @@ export default function TabBar() {
       tabsRef.current.scrollLeft += e.deltaY;
     }
   }, []);
+
+  // Scroll the active tab into view whenever the active tab changes
+  useEffect(() => {
+    if (!tabsRef.current) return;
+    const activeEl = tabsRef.current.querySelector(".tab.active") as HTMLElement | null;
+    activeEl?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [state.activeTabId]);
 
   // Close context menu on outside click
   const handleOverlayClick = useCallback(() => {

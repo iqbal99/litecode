@@ -1,25 +1,46 @@
 import { useCallback } from "react";
+import * as monaco from "monaco-editor";
 import { useEditor } from "../store/editorStore";
 import { cycleTheme, saveSetting } from "../commands/theme";
 import type { StatusInfo } from "../types";
+
+const DEFAULT_TAB_SIZE = 2;
+const DEFAULT_INSERT_SPACES = true;
 
 export default function StatusBar() {
   const { state, dispatch } = useEditor();
 
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
 
+  // Read indentation and EOL directly from the active Monaco model
+  const model = activeTab
+    ? monaco.editor.getModel(monaco.Uri.parse(activeTab.modelUri))
+    : null;
+  const modelOptions = model?.getOptions();
+  const tabSize = modelOptions?.tabSize ?? DEFAULT_TAB_SIZE;
+  const insertSpaces = modelOptions?.insertSpaces ?? DEFAULT_INSERT_SPACES;
+  const indentation = insertSpaces ? `Spaces: ${tabSize}` : `Tab Size: ${tabSize}`;
+  const eolSeq = model?.getEOL();
+  const eol = eolSeq === "\r\n" ? "CRLF" : eolSeq === "\r" ? "CR" : "LF";
+
   const info: StatusInfo = {
     language: activeTab?.language ?? "plaintext",
     lineNumber: activeTab?.cursorPosition?.lineNumber ?? 1,
     column: activeTab?.cursorPosition?.column ?? 1,
     encoding: "UTF-8",
-    eol: "LF",
-    indentation: `Spaces: ${state.fontSize >= 1 ? 4 : 2}`,
+    eol,
+    indentation,
   };
 
   const handleThemeClick = useCallback(() => {
     cycleTheme(state.theme, dispatch);
   }, [state.theme, dispatch]);
+
+  const handleLanguageClick = useCallback(() => {
+    window.dispatchEvent(
+      new CustomEvent("litecode:open-palette", { detail: { prefill: "lang:" } })
+    );
+  }, []);
 
   const handleWordWrapToggle = useCallback(() => {
     const next = state.wordWrap === "on" ? "off" : "on";
@@ -48,7 +69,15 @@ export default function StatusBar() {
       </div>
       <div className="status-right">
         {activeTab && (
-          <span className="status-item status-language">{info.language}</span>
+          <span className="status-item status-language">
+            <button
+              className="status-btn"
+              onClick={handleLanguageClick}
+              title="Change language mode"
+            >
+              {info.language}
+            </button>
+          </span>
         )}
         <button
           className="status-item status-btn"
