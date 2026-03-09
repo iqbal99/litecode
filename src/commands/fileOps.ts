@@ -5,6 +5,7 @@ import type { Tab, EditorAction } from "../types";
 import { persistRecentFile } from "../store/recentFiles";
 
 let untitledCounter = 0;
+const inFlightUris = new Set<string>();
 
 /**
  * Detect Monaco language ID from file extension.
@@ -145,33 +146,42 @@ export async function openFilePath(
     // Use file:// URI so Monaco's TypeScript/language workers reliably identify
     // the file type from the extension (e.g. file:///Users/x/foo.tsx → typescript)
     const uri = monaco.Uri.file(filePath);
+    const uriStr = uri.toString();
+
+    // Prevent duplicate model creation from rapid parallel calls
+    if (inFlightUris.has(uriStr)) return;
 
     // Check if model for this URI already exists (file already open)
     const existingModel = monaco.editor.getModel(uri);
     if (existingModel) {
       // File is already open — just switch to that tab via OPEN_TAB
       // (reducer detects duplicate by filePath and activates existing tab)
-      dispatch({ type: "OPEN_TAB", tab: { id, filePath, fileName, isDirty: false, language, modelUri: uri.toString(), cursorPosition: { lineNumber: 1, column: 1 }, scrollPosition: { scrollTop: 0, scrollLeft: 0 } } });
+      dispatch({ type: "OPEN_TAB", tab: { id, filePath, fileName, isDirty: false, language, modelUri: uriStr, cursorPosition: { lineNumber: 1, column: 1 }, scrollPosition: { scrollTop: 0, scrollLeft: 0 } } });
       return;
     }
 
-    // Create Monaco model
-    monaco.editor.createModel(content, language, uri);
+    inFlightUris.add(uriStr);
+    try {
+      // Create Monaco model
+      monaco.editor.createModel(content, language, uri);
 
-    const tab: Tab = {
-      id,
-      filePath,
-      fileName,
-      isDirty: false,
-      language,
-      modelUri: uri.toString(),
-      cursorPosition: { lineNumber: 1, column: 1 },
-      scrollPosition: { scrollTop: 0, scrollLeft: 0 },
-    };
+      const tab: Tab = {
+        id,
+        filePath,
+        fileName,
+        isDirty: false,
+        language,
+        modelUri: uriStr,
+        cursorPosition: { lineNumber: 1, column: 1 },
+        scrollPosition: { scrollTop: 0, scrollLeft: 0 },
+      };
 
-    dispatch({ type: "OPEN_TAB", tab });
-    dispatch({ type: "ADD_RECENT_FILE", filePath });
-    persistRecentFile(filePath); // persist to disk (fire-and-forget)
+      dispatch({ type: "OPEN_TAB", tab });
+      dispatch({ type: "ADD_RECENT_FILE", filePath });
+      persistRecentFile(filePath); // persist to disk (fire-and-forget)
+    } finally {
+      inFlightUris.delete(uriStr);
+    }
   } catch (err) {
     console.error("Failed to open file:", err);
   }

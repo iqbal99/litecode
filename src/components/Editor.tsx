@@ -8,6 +8,7 @@ import type { Tab } from "../types";
 export default function Editor() {
   const { state, dispatch } = useEditor();
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const disposablesRef = useRef<monaco.IDisposable[]>([]);
   const activeTabId = state.activeTabId;
 
   // Always-fresh refs so event handlers never capture stale closures
@@ -15,9 +16,12 @@ export default function Editor() {
   tabsRef.current = state.tabs;
   const activeTabIdRef = useRef<string | null>(activeTabId);
   activeTabIdRef.current = activeTabId;
+  const settingsRef = useRef(state.settings);
+  settingsRef.current = state.settings;
 
   // Track previous tab IDs to detect additions and removals
   const prevTabIdsRef = useRef<Set<string>>(new Set());
+  const prevTabPathsRef = useRef<Map<string, string>>(new Map()); // tabId → filePath
   const activeTab = state.tabs.find((t) => t.id === activeTabId) ?? null;
 
   const handleMount: OnMount = useCallback(
@@ -33,7 +37,7 @@ export default function Editor() {
       }
 
       // Cursor tracking — read activeTabIdRef so it’s always current
-      editor.onDidChangeCursorPosition((e) => {
+      disposablesRef.current.push(editor.onDidChangeCursorPosition((e) => {
         const tabId = activeTabIdRef.current;
         if (tabId) {
           dispatch({
@@ -45,13 +49,13 @@ export default function Editor() {
             },
           });
         }
-      });
+      }));
 
       // Dirty tracking — same ref fix
-      editor.onDidChangeModelContent(() => {
+      disposablesRef.current.push(editor.onDidChangeModelContent(() => {
         const tabId = activeTabIdRef.current;
         if (tabId) dispatch({ type: "MARK_DIRTY", tabId });
-      });
+      }));
 
       editor.focus();
     },
@@ -94,6 +98,16 @@ export default function Editor() {
 
         editor.setModel(model);
 
+        // Seed indentation on newly-opened models:
+        // - always for empty/new files (nothing to detect from)
+        // - always when detectIndentation is off (user wants their settings forced)
+        if (model.getValue().length === 0 || !settingsRef.current.detectIndentation) {
+          model.updateOptions({
+            tabSize: settingsRef.current.tabSize,
+            insertSpaces: settingsRef.current.insertSpaces,
+          });
+        }
+
         // Restore cursor/scroll for new tab
         if (activeTab.cursorPosition) {
           editor.setPosition({
@@ -112,16 +126,82 @@ export default function Editor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 
+  // Clear or restore diagnostics markers when toggle changes
+  useEffect(() => {
+    if (!state.diagnostics) {
+      // Clear all markers on every model
+      monaco.editor.getModels().forEach((model) => {
+        monaco.editor.setModelMarkers(model, "owner", []);
+      });
+    }
+  }, [state.diagnostics]);
+
+  // Intercept marker changes when diagnostics are disabled
+  useEffect(() => {
+    if (state.diagnostics) return;
+    const id = setInterval(() => {
+      monaco.editor.getModels().forEach((model) => {
+        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+        if (markers.length > 0) {
+          monaco.editor.setModelMarkers(model, "owner", []);
+        }
+      });
+    }, 300);
+    return () => clearInterval(id);
+  }, [state.diagnostics]);
+
   // Sync editor options when settings change
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    const s = state.settings;
     editor.updateOptions({
       fontSize: state.fontSize,
       wordWrap: state.wordWrap,
-      minimap: { enabled: state.minimap },
+      minimap: { enabled: state.minimap, side: s.minimapSide },
+      fontFamily: s.fontFamily || undefined,
+      lineHeight: s.lineHeight || 0,
+      fontLigatures: s.fontLigatures,
+      wordWrapColumn: s.wordWrapColumn,
+      tabSize: s.tabSize,
+      insertSpaces: s.insertSpaces,
+      detectIndentation: s.detectIndentation,
+      renderWhitespace: s.renderWhitespace,
+      lineNumbers: s.lineNumbers,
+      cursorBlinking: s.cursorBlinking,
+      cursorStyle: s.cursorStyle,
+      smoothScrolling: s.smoothScrolling,
+      mouseWheelZoom: s.mouseWheelZoom,
+      scrollBeyondLastLine: s.scrollBeyondLastLine,
+      formatOnPaste: s.formatOnPaste,
+      formatOnType: s.formatOnType,
+      autoClosingBrackets: s.autoClosingBrackets,
+      autoClosingQuotes: s.autoClosingQuotes,
+      bracketPairColorization: { enabled: s.bracketPairColorization },
+      guides: { bracketPairs: s.showBracketGuides, indentation: s.showBracketGuides },
+      folding: s.folding,
+      links: s.links,
+      quickSuggestions: s.quickSuggestions
+        ? { other: true, comments: false, strings: true }
+        : false,
+      parameterHints: { enabled: s.parameterHints, cycle: true },
+      acceptSuggestionOnEnter: s.acceptSuggestionOnEnter,
+      tabCompletion: s.tabCompletion,
+      snippetSuggestions: s.snippetSuggestions,
+      matchBrackets: s.matchBrackets,
+      autoSurround: s.autoSurround,
     });
-  }, [state.fontSize, state.wordWrap, state.minimap]);
+
+    // Push indentation settings to every open model so formatters pick them up.
+    // When detectIndentation is true Monaco auto-detects per file; we only
+    // override models that have no content (new / untitled files) in that case.
+    const modelOpts = { tabSize: s.tabSize, insertSpaces: s.insertSpaces };
+    monaco.editor.getModels().forEach((model) => {
+      if (!s.detectIndentation || model.getValue().length === 0) {
+        model.updateOptions(modelOpts);
+      }
+    });
+  }, [state.fontSize, state.wordWrap, state.minimap, state.settings]);
 
   // Manage file watchers as tabs open and close
   useEffect(() => {
@@ -141,15 +221,23 @@ export default function Editor() {
     // Stop watcher for tabs that were closed
     prevTabIdsRef.current.forEach((id) => {
       if (!currentIds.has(id)) {
-        unwatchFile(id);
+        const fp = prevTabPathsRef.current.get(id);
+        if (fp) unwatchFile(fp);
       }
     });
 
     prevTabIdsRef.current = currentIds;
+    const pathMap = new Map<string, string>();
+    state.tabs.forEach((t) => { if (t.filePath) pathMap.set(t.id, t.filePath); });
+    prevTabPathsRef.current = pathMap;
   }, [state.tabs, dispatch]);
 
-  // Clean up all watchers when editor unmounts
-  useEffect(() => () => unwatchAll(), []);
+  // Clean up all watchers and editor listeners when editor unmounts
+  useEffect(() => () => {
+    unwatchAll();
+    disposablesRef.current.forEach((d) => d.dispose());
+    disposablesRef.current = [];
+  }, []);
 
   if (!activeTab) {
     return null; // Welcome screen shown instead
@@ -163,16 +251,21 @@ export default function Editor() {
         options={{
           fontSize: state.fontSize,
           wordWrap: state.wordWrap,
-          minimap: { enabled: state.minimap },
+          minimap: { enabled: state.minimap, side: state.settings.minimapSide },
+          fontFamily: state.settings.fontFamily || undefined,
+          lineHeight: state.settings.lineHeight || 0,
+          fontLigatures: state.settings.fontLigatures,
+          wordWrapColumn: state.settings.wordWrapColumn,
           automaticLayout: true,
-          scrollBeyondLastLine: false,
-          renderWhitespace: "selection",
-          cursorBlinking: "smooth",
-          smoothScrolling: true,
+          scrollBeyondLastLine: state.settings.scrollBeyondLastLine,
+          renderWhitespace: state.settings.renderWhitespace,
+          cursorBlinking: state.settings.cursorBlinking,
+          cursorStyle: state.settings.cursorStyle,
+          smoothScrolling: state.settings.smoothScrolling,
           padding: { top: 8 },
           // Bracket & guide features
-          bracketPairColorization: { enabled: true },
-          guides: { bracketPairs: true, indentation: true },
+          bracketPairColorization: { enabled: state.settings.bracketPairColorization },
+          guides: { bracketPairs: state.settings.showBracketGuides, indentation: state.settings.showBracketGuides },
           // Completions & IntelliSense
           suggest: {
             showWords: true,
@@ -181,31 +274,33 @@ export default function Editor() {
             preview: true,
             filterGraceful: true,
           },
-          quickSuggestions: { other: true, comments: false, strings: true },
+          quickSuggestions: state.settings.quickSuggestions
+            ? { other: true, comments: false, strings: true }
+            : false,
           quickSuggestionsDelay: 100,
           suggestOnTriggerCharacters: true,
           acceptSuggestionOnCommitCharacter: true,
-          acceptSuggestionOnEnter: "on",
-          tabCompletion: "on",
-          parameterHints: { enabled: true, cycle: true },
+          acceptSuggestionOnEnter: state.settings.acceptSuggestionOnEnter,
+          tabCompletion: state.settings.tabCompletion,
+          parameterHints: { enabled: state.settings.parameterHints, cycle: true },
           // Formatting
-          formatOnPaste: true,
-          formatOnType: false,
+          formatOnPaste: state.settings.formatOnPaste,
+          formatOnType: state.settings.formatOnType,
           // Editing quality-of-life
-          autoClosingBrackets: "always",
-          autoClosingQuotes: "always",
-          autoSurround: "languageDefined",
-          matchBrackets: "always",
-          snippetSuggestions: "inline",
+          autoClosingBrackets: state.settings.autoClosingBrackets,
+          autoClosingQuotes: state.settings.autoClosingQuotes,
+          autoSurround: state.settings.autoSurround,
+          matchBrackets: state.settings.matchBrackets,
+          snippetSuggestions: state.settings.snippetSuggestions,
           // Behaviour
-          tabSize: 2,
-          detectIndentation: true,
-          insertSpaces: true,
-          lineNumbers: "on",
-          folding: true,
-          links: true,
+          tabSize: state.settings.tabSize,
+          detectIndentation: state.settings.detectIndentation,
+          insertSpaces: state.settings.insertSpaces,
+          lineNumbers: state.settings.lineNumbers,
+          folding: state.settings.folding,
+          links: state.settings.links,
           contextmenu: true,
-          mouseWheelZoom: true,
+          mouseWheelZoom: state.settings.mouseWheelZoom,
           // Find
           find: { addExtraSpaceOnTop: false, autoFindInSelection: "multiline" },
         }}

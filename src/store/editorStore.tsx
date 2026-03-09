@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useReducer, useRef } from "react";
 import type * as monaco from "monaco-editor";
 import type { EditorState, EditorAction, EditorContextType } from "../types";
-
-const MAX_RECENT_FILES = 20;
+import { DEFAULT_EDITOR_SETTINGS, SETTINGS_TAB_ID, MAX_RECENT_FILES } from "../types";
 
 export const initialState: EditorState = {
   tabs: [],
@@ -12,6 +11,9 @@ export const initialState: EditorState = {
   wordWrap: "off",
   minimap: true,
   recentFiles: [],
+  settings: { ...DEFAULT_EDITOR_SETTINGS },
+  isSettingsOpen: false,
+  diagnostics: true,
 };
 
 export function editorReducer(
@@ -35,6 +37,7 @@ export function editorReducer(
     }
 
     case "CLOSE_TAB": {
+      const closingTab = state.tabs.find((t) => t.id === action.tabId);
       const idx = state.tabs.findIndex((t) => t.id === action.tabId);
       const newTabs = state.tabs.filter((t) => t.id !== action.tabId);
       let newActiveId = state.activeTabId;
@@ -47,11 +50,18 @@ export function editorReducer(
           newActiveId = newTabs[idx].id;
         }
       }
-      return { ...state, tabs: newTabs, activeTabId: newActiveId };
+      return {
+        ...state,
+        tabs: newTabs,
+        activeTabId: newActiveId,
+        ...(closingTab?.isSettings ? { isSettingsOpen: false } : {}),
+      };
     }
 
-    case "SET_ACTIVE_TAB":
-      return { ...state, activeTabId: action.tabId };
+    case "SET_ACTIVE_TAB": {
+      const exists = state.tabs.some((t) => t.id === action.tabId);
+      return exists ? { ...state, activeTabId: action.tabId } : state;
+    }
 
     case "MARK_DIRTY":
       return {
@@ -123,6 +133,51 @@ export function editorReducer(
           t.id === action.tabId ? { ...t, language: action.language } : t
         ),
       };
+
+    case "LOAD_SETTINGS":
+      return { ...state, settings: { ...DEFAULT_EDITOR_SETTINGS, ...action.settings } };
+
+    case "UPDATE_SETTING":
+      return {
+        ...state,
+        settings: { ...state.settings, [action.key]: action.value },
+      };
+
+    case "OPEN_SETTINGS": {
+      const alreadyOpen = state.tabs.find((t) => t.isSettings);
+      if (alreadyOpen) {
+        return { ...state, activeTabId: SETTINGS_TAB_ID, isSettingsOpen: true };
+      }
+      const settingsTab: import("../types").Tab = {
+        id: SETTINGS_TAB_ID,
+        fileName: "Settings",
+        filePath: null,
+        isDirty: false,
+        language: "",
+        modelUri: "",
+        isSettings: true,
+        cursorPosition: { lineNumber: 1, column: 1 },
+        scrollPosition: { scrollTop: 0, scrollLeft: 0 },
+      };
+      return {
+        ...state,
+        tabs: [...state.tabs, settingsTab],
+        activeTabId: "__settings__",
+        isSettingsOpen: true,
+      };
+    }
+
+    case "CLOSE_SETTINGS": {
+      const newTabs = state.tabs.filter((t) => !t.isSettings);
+      let newActiveId = state.activeTabId;
+      if (state.activeTabId === SETTINGS_TAB_ID) {
+        newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
+      }
+      return { ...state, tabs: newTabs, activeTabId: newActiveId, isSettingsOpen: false };
+    }
+
+    case "SET_DIAGNOSTICS":
+      return { ...state, diagnostics: action.diagnostics };
 
     default:
       return state;

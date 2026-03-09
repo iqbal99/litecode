@@ -14,10 +14,14 @@
   --accent-hover: #1a8cdf;
   --border: #3c3c3c;
   --dirty-dot: #e8a838;
+  /* Status bar: slightly darker/distinct surface, neutral text */
+  --bg-statusbar: #161616;
+  --text-statusbar: #808080;
+  --border-statusbar: #333333;
   --tab-height: 36px;
   --status-height: 24px;
   --titlebar-height: 48px;
-  --toolbar-height: 32px;
+  --toolbar-height: 38px;
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", sans-serif;
   --font-mono: "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
@@ -25,6 +29,44 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------- Light theme (vs) ---------- */
+[data-theme="vs"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #ebebeb;
+  --bg-hover: #e0e0e0;
+  --bg-active: #d7d7d7;
+  --text-primary: #1e1e1e;
+  --text-secondary: #555555;
+  --text-muted: #999999;
+  --accent: #0065bd;
+  --accent-hover: #0078d4;
+  --border: #d0d0d0;
+  --dirty-dot: #c97c00;
+  --bg-statusbar: #e4e4e4;
+  --text-statusbar: #555555;
+  --border-statusbar: #c8c8c8;
+}
+
+/* ---------- High Contrast (hc-black) ---------- */
+[data-theme="hc-black"] {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-hover: #1e1e1e;
+  --bg-active: #252525;
+  --text-primary: #ffffff;
+  --text-secondary: #d4d4d4;
+  --text-muted: #a0a0a0;
+  --accent: #69c5f5;
+  --accent-hover: #87d0f7;
+  --border: #6fc3df;
+  --dirty-dot: #ffcc00;
+  --bg-statusbar: #000000;
+  --text-statusbar: #d4d4d4;
+  --border-statusbar: #6fc3df;
 }
 
 /* ---------- Reset & Base ---------- */
@@ -61,8 +103,23 @@ body,
 .editor-area {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   position: relative;
   overflow: hidden;
+}
+
+/* Keeps Monaco mounted when Settings tab is active */
+.editor-slot {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-slot--hidden {
+  display: none;
 }
 
 .editor-container {
@@ -150,7 +207,8 @@ body,
 }
 
 .titlebar-right {
-  flex: 0 0 80px;
+  flex: 0 0 auto;
+  min-width: 80px;
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -162,33 +220,37 @@ body,
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 /* Windows / Linux: custom window controls (right zone) */
 .titlebar-right--wc {
   flex: 0 0 auto;
   padding: 0;
-  align-items: stretch;
+  gap: 0;
+  align-items: center;
+  /* pull flush to the right edge on a frameless window */
+  margin-right: -12px;
 }
 
 .titlebar-wc-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 100%;
+  width: 46px;
+  height: 32px;
   background: transparent;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition: background 0.1s ease, color 0.15s ease;
   flex-shrink: 0;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 
 .titlebar-wc-btn:hover {
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
 
@@ -220,6 +282,10 @@ body,
   gap: 1px;
 }
 
+.tb-settings-group {
+  margin-left: auto;
+}
+
 .tb-sep {
   display: inline-block;
   width: 1px;
@@ -233,8 +299,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -246,9 +312,9 @@ body,
   position: relative;
 }
 .tb-btn svg {
-  width: 15px;
-  height: 15px;
+  /* size controlled by the Lucide size prop — no override here */
   pointer-events: none;
+  flex-shrink: 0;
 }
 .tb-btn:hover {
   background: var(--bg-hover);
@@ -292,9 +358,8 @@ body,
   user-select: none;
 }
 
-/* Dirty indicator pill — right-aligned */
+/* Dirty indicator pill — sits just before the settings gear */
 .tb-dirty-pill {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -425,8 +490,9 @@ body,
   flex-shrink: 0;
   height: var(--status-height);
   padding: 0 8px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--bg-statusbar);
+  color: var(--text-statusbar);
+  border-top: 1px solid var(--border-statusbar);
   font-size: 11px;
   user-select: none;
 }
@@ -442,16 +508,18 @@ body,
 .status-btn {
   background: transparent;
   border: none;
-  color: #fff;
+  color: var(--text-statusbar);
   font-size: 11px;
   cursor: pointer;
   padding: 0 4px;
+  border-radius: 3px;
   font-family: var(--font-family);
   height: 100%;
+  transition: background 0.1s, color 0.1s;
 }
 .status-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 .status-language {
   text-transform: capitalize;
@@ -462,7 +530,9 @@ body,
   display: flex;
   justify-content: center;
   align-items: center;
+  flex: 1;
   height: 100%;
+  width: 100%;
   padding: 40px;
   overflow-y: auto;
 }
@@ -852,4 +922,65 @@ body,
 }
 .app.drag-over {
   /* subtle visual hint */
+}
+
+/* ---------- StatusBar Inline Language Picker ---------- */
+.sb-lang-picker {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  width: 220px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 2000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-lang-input {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-tertiary);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.sb-lang-list {
+  overflow-y: auto;
+  max-height: 220px;
+  padding: 3px 0;
+}
+
+.sb-lang-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sb-lang-item:hover {
+  background: var(--bg-hover);
+}
+
+.sb-lang-item.sb-lang-current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sb-lang-check {
+  color: var(--accent);
+  font-size: 11px;
+  margin-left: 6px;
 }

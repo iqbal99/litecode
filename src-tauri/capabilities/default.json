@@ -7,6 +7,8 @@
     "core:default",
     "core:window:allow-set-title",
     "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
     "opener:default",
     "dialog:default",
     "dialog:allow-open",
@@ -30,8 +32,7 @@
         { "path": "$HOME/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENT/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "/**" }
+        { "path": "$DOWNLOAD/**" }
       ]
     },
     {
@@ -40,22 +41,25 @@
         { "path": "$HOME/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENT/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "/**" }
+        { "path": "$DOWNLOAD/**" }
       ]
     },
     {
       "identifier": "fs:allow-exists",
       "allow": [
-        { "path": "$HOME/**" },
-        { "path": "/**" }
+        { "path": "$HOME/**" }
       ]
     },
     {
       "identifier": "fs:allow-stat",
       "allow": [
-        { "path": "$HOME/**" },
-        { "path": "/**" }
+        { "path": "$HOME/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$HOME/**" }
       ]
     },
     "fs:allow-watch",

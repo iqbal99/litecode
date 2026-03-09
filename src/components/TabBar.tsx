@@ -22,7 +22,12 @@ export default function TabBar() {
     (e: React.MouseEvent, tabId: string) => {
       e.stopPropagation();
       const tab = state.tabs.find((t) => t.id === tabId);
-      if (tab) closeTab(tab, dispatch);
+      if (!tab) return;
+      if (tab.isSettings) {
+        dispatch({ type: "CLOSE_SETTINGS" });
+      } else {
+        closeTab(tab, dispatch);
+      }
     },
     [state, dispatch]
   );
@@ -30,14 +35,17 @@ export default function TabBar() {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, tabId: string) => {
       e.preventDefault();
+      const tab = state.tabs.find((t) => t.id === tabId);
+      // No context menu for the settings tab
+      if (tab?.isSettings) return;
       setContextMenu({ x: e.clientX, y: e.clientY, tabId });
     },
-    []
+    [state]
   );
 
   const handleCloseOthers = useCallback(
     async (tabId: string) => {
-      const others = state.tabs.filter((t) => t.id !== tabId);
+      const others = state.tabs.filter((t) => t.id !== tabId && !t.isSettings);
       for (const tab of others) {
         await closeTab(tab, dispatch);
       }
@@ -48,13 +56,17 @@ export default function TabBar() {
 
   const handleCloseAll = useCallback(async () => {
     for (const tab of [...state.tabs]) {
-      await closeTab(tab, dispatch);
+      if (tab.isSettings) {
+        dispatch({ type: "CLOSE_SETTINGS" });
+      } else {
+        await closeTab(tab, dispatch);
+      }
     }
     setContextMenu(null);
   }, [state, dispatch]);
 
   const handleCloseSaved = useCallback(async () => {
-    const saved = state.tabs.filter((t) => !t.isDirty);
+    const saved = state.tabs.filter((t) => !t.isDirty && !t.isSettings);
     for (const tab of saved) {
       await closeTab(tab, dispatch);
     }
@@ -82,7 +94,12 @@ export default function TabBar() {
       if (e.button === 1) {
         e.preventDefault();
         const tab = state.tabs.find((t) => t.id === tabId);
-        if (tab) closeTab(tab, dispatch);
+        if (!tab) return;
+        if (tab.isSettings) {
+          dispatch({ type: "CLOSE_SETTINGS" });
+        } else {
+          closeTab(tab, dispatch);
+        }
       }
     },
     [state, dispatch]
@@ -117,14 +134,14 @@ export default function TabBar() {
             key={tab.id}
             className={`tab ${tab.id === state.activeTabId ? "active" : ""} ${
               tab.isDirty ? "dirty" : ""
-            }`}
+            }${tab.isSettings ? " tab-settings" : ""}`}
             onClick={() => handleTabClick(tab.id)}
             onMouseDown={(e) => handleMouseDown(e, tab.id)}
             onContextMenu={(e) => handleContextMenu(e, tab.id)}
-            title={tab.filePath ?? tab.fileName}
+            title={tab.isSettings ? "Settings" : (tab.filePath ?? tab.fileName)}
           >
             <span className="tab-name">{tab.fileName}</span>
-            {tab.isDirty && <span className="tab-dirty-dot">●</span>}
+            {tab.isDirty && !tab.isSettings && <span className="tab-dirty-dot">●</span>}
             <button
               className="tab-close"
               onClick={(e) => handleClose(e, tab.id)}

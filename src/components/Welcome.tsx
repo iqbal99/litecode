@@ -26,11 +26,11 @@ export default function Welcome() {
     dispatch({ type: "SET_RECENT_FILES", recentFiles: [] });
   }, [dispatch]);
 
-  // Extract just the filename from a path
-  const fileName = (path: string) => path.split("/").pop() ?? path;
+  // Extract just the filename from a path (handles both / and \)
+  const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
   // Extract directory portion
   const dirName = (path: string) => {
-    const parts = path.split("/");
+    const parts = path.split(/[\\/]/);
     parts.pop();
     return parts.join("/") || "/";
   };

@@ -1,5 +1,6 @@
-import { useCallback } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import { useEditor } from "../store/editorStore";
 
 interface TitleBarProps {
@@ -9,13 +10,18 @@ interface TitleBarProps {
 // Detect platform once at module load — avoids re-computing per render
 const isMac = navigator.userAgent.includes("Macintosh");
 
-const winMinimize = () => void getCurrentWindow().minimize();
-const winMaximize = () => void getCurrentWindow().toggleMaximize();
-const winClose    = () => void getCurrentWindow().close();
+const winMinimize = () => { getCurrentWindow().minimize().catch(console.error); };
+const winMaximize = () => { getCurrentWindow().toggleMaximize().catch(console.error); };
+const winClose    = () => { getCurrentWindow().close().catch(console.error); };
 
 export default function TitleBar({ onOpenPalette }: TitleBarProps) {
   const { state } = useEditor();
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion(""));
+  }, []);
 
   const label = activeTab
     ? `${activeTab.isDirty ? "● " : ""}${activeTab.fileName}`
@@ -39,42 +45,44 @@ export default function TitleBar({ onOpenPalette }: TitleBarProps) {
         <button
           className="titlebar-search"
           onClick={handleClick}
-          title="Open Command Palette (⌘P)"
+          title="Files & App Commands (⌘P) · ⇧⌘P for editor commands"
         >
           <span className="titlebar-search-icon">⌘</span>
           <span className="titlebar-search-label">{label}</span>
           <span className="titlebar-search-hint">⌘P</span>
+          <span className="titlebar-search-hint" style={{ opacity: 0.5, fontSize: "0.75em", marginLeft: 4 }}>⇧⌘P editor</span>
         </button>
       </div>
 
       {/* Right zone: app label on macOS | custom window controls on Windows/Linux */}
       {isMac ? (
         <div className="titlebar-right" data-tauri-drag-region>
-          <span className="titlebar-app-name">LiteCode</span>
+          <span className="titlebar-app-name">LiteCode{appVersion ? `  v${appVersion}` : ""}</span>
         </div>
       ) : (
         <div className="titlebar-right titlebar-right--wc">
+          {appVersion && <span className="titlebar-app-name" style={{ marginRight: 8 }}>v{appVersion}</span>}
           {/* Minimize */}
           <button className="titlebar-wc-btn" onClick={winMinimize} title="Minimize">
-            <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor" aria-hidden>
-              <rect width="10" height="1" />
+            <svg width="12" height="2" viewBox="0 0 12 2" fill="currentColor" aria-hidden>
+              <rect width="12" height="1.5" y="0.25" rx="0.5" />
             </svg>
           </button>
 
           {/* Maximize / Restore */}
           <button className="titlebar-wc-btn" onClick={winMaximize} title="Maximize">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-                 stroke="currentColor" strokeWidth="1" aria-hidden>
-              <rect x="0.5" y="0.5" width="9" height="9" />
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+                 stroke="currentColor" strokeWidth="1.2" aria-hidden>
+              <rect x="0.6" y="0.6" width="9.8" height="9.8" rx="0.5" />
             </svg>
           </button>
 
           {/* Close */}
           <button className="titlebar-wc-btn titlebar-wc-close" onClick={winClose} title="Close">
-            <svg width="10" height="10" viewBox="0 0 10 10"
-                 stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden>
-              <line x1="0" y1="0" x2="10" y2="10" />
-              <line x1="10" y1="0" x2="0"  y2="10" />
+            <svg width="12" height="12" viewBox="0 0 12 12"
+                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+              <line x1="1" y1="1" x2="11" y2="11" />
+              <line x1="11" y1="1" x2="1"  y2="11" />
             </svg>
           </button>
         </div>

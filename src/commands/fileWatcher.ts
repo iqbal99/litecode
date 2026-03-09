@@ -19,8 +19,8 @@ export async function watchFile(
   dispatch: Dispatch<EditorAction>
 ): Promise<void> {
   if (!tab.filePath) return;
-  // Don't double-watch
-  if (watchers.has(tab.id)) return;
+  // Don't double-watch — key by filePath so reopening the same file is safe
+  if (watchers.has(tab.filePath)) return;
 
   const filePath = tab.filePath;
 
@@ -47,8 +47,9 @@ export async function watchFile(
         );
         if (!model) return;
 
-        // Check if content actually differs
-        if (model.getValue() === content) return;
+        // Check if content actually differs (normalize line endings)
+        const normalize = (s: string) => s.replace(/\r\n/g, "\n");
+        if (normalize(model.getValue()) === normalize(content)) return;
 
         if (latestTab.isDirty) {
           // Prompt user
@@ -68,7 +69,7 @@ export async function watchFile(
       }
     });
 
-    watchers.set(tab.id, unwatch as unknown as UnwatchFn);
+    watchers.set(filePath, unwatch as unknown as UnwatchFn);
   } catch (err) {
     console.error("Failed to watch file:", filePath, err);
   }
@@ -77,11 +78,11 @@ export async function watchFile(
 /**
  * Stop watching a file.
  */
-export function unwatchFile(tabId: string): void {
-  const unwatch = watchers.get(tabId);
+export function unwatchFile(filePath: string): void {
+  const unwatch = watchers.get(filePath);
   if (unwatch) {
     unwatch();
-    watchers.delete(tabId);
+    watchers.delete(filePath);
   }
 }
 

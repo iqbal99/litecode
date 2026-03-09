@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:          # lets you trigger a build manually from GitHub UI
+  workflow_dispatch: # lets you trigger a build manually from GitHub UI
 
 jobs:
   build-tauri:
@@ -14,23 +14,23 @@ jobs:
         include:
           # ── Windows (x64) ──────────────────────────────────────────────────
           - platform: windows-latest
-            target:   x86_64-pc-windows-msvc
-            os-name:  windows
+            target: x86_64-pc-windows-msvc
+            os-name: windows
 
           # ── macOS Apple Silicon ────────────────────────────────────────────
           - platform: macos-latest
-            target:   aarch64-apple-darwin
-            os-name:  macos-arm
+            target: aarch64-apple-darwin
+            os-name: macos-arm
 
           # ── macOS Intel ───────────────────────────────────────────────────
           - platform: macos-latest
-            target:   x86_64-apple-darwin
-            os-name:  macos-intel
+            target: x86_64-apple-darwin
+            os-name: macos-intel
 
           # ── Linux (x64) ───────────────────────────────────────────────────
           - platform: ubuntu-22.04
-            target:   x86_64-unknown-linux-gnu
-            os-name:  linux
+            target: x86_64-unknown-linux-gnu
+            os-name: linux
 
     runs-on: ${{ matrix.platform }}
 

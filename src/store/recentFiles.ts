@@ -45,17 +45,23 @@ export async function addRecentFile(
 /**
  * Add a single file to the persistent store (fire-and-forget safe).
  * Call this whenever a file is opened; it deduplicates and trims to MAX_RECENT.
+ * Uses a promise queue to serialize writes and prevent lost updates.
  */
-export async function persistRecentFile(filePath: string): Promise<void> {
-  try {
-    const store = await load(STORE_NAME, { defaults: {}, autoSave: true });
-    const current = (await store.get<string[]>(RECENT_KEY)) ?? [];
-    const filtered = current.filter((f) => f !== filePath);
-    const updated = [filePath, ...filtered].slice(0, MAX_RECENT);
-    await store.set(RECENT_KEY, updated);
-  } catch (err) {
-    console.error("Failed to persist recent file:", err);
-  }
+let persistQueue = Promise.resolve();
+
+export function persistRecentFile(filePath: string): Promise<void> {
+  persistQueue = persistQueue.then(async () => {
+    try {
+      const store = await load(STORE_NAME, { defaults: {}, autoSave: true });
+      const current = (await store.get<string[]>(RECENT_KEY)) ?? [];
+      const filtered = current.filter((f) => f !== filePath);
+      const updated = [filePath, ...filtered].slice(0, MAX_RECENT);
+      await store.set(RECENT_KEY, updated);
+    } catch (err) {
+      console.error("Failed to persist recent file:", err);
+    }
+  });
+  return persistQueue;
 }
 
 /**
