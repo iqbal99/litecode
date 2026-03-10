@@ -3,6 +3,7 @@ import MonacoEditor, { BeforeMount, OnMount } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { useEditor } from "../store/editorStore";
 import { watchFile, unwatchFile, unwatchAll } from "../commands/fileWatcher";
+import { registerFormatters } from "../commands/formatter";
 import type { Tab } from "../types";
 
 export default function Editor() {
@@ -33,6 +34,9 @@ export default function Editor() {
         "editor.background": "#f3f3f3",
       },
     });
+
+    // Register generic formatters for languages without Monaco built-in support
+    registerFormatters(m);
   }, []);
 
   const monacoTheme = state.theme === "vs" ? "litecode-light" : state.theme;

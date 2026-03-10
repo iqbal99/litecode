@@ -176,6 +176,13 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
           saveSetting("fontSize", 14);
         },
       },
+      {
+        id: "format-document", label: "Format Document", shortcut: ["⇧", "⌥", "F"],
+        action: () => {
+          const editor = monaco.editor.getEditors()[0];
+          editor?.getAction("editor.action.formatDocument")?.run();
+        },
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.theme, state.wordWrap, state.minimap, state.fontSize, activeTab, dispatch]

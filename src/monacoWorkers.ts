@@ -5,8 +5,11 @@ import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
-// Must be imported to register the TypeScript/JavaScript language contributions
+// Must be imported to register the language contributions (completions, formatters, etc.)
 import "monaco-editor/esm/vs/language/typescript/monaco.contribution";
+import "monaco-editor/esm/vs/language/json/monaco.contribution";
+import "monaco-editor/esm/vs/language/css/monaco.contribution";
+import "monaco-editor/esm/vs/language/html/monaco.contribution";
 
 // ── Tell @monaco-editor/react to use this bundled Monaco instance ─────────────
 // Without this, the React wrapper loads a *separate* Monaco from CDN, which means
