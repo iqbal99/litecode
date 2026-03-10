@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState, useEffect } from "react";
 import { RotateCcw } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import {
@@ -22,6 +22,45 @@ const CATEGORIES = [
   { id: "guides",       label: "Guides & Brackets" },
   { id: "suggestions",  label: "Suggestions" },
 ];
+
+// ─── Font detection ──────────────────────────────────────────────────────────
+
+const CANDIDATE_FONTS = [
+  "Consolas",
+  "Cascadia Mono",
+  "Cascadia Code",
+  "SF Mono",
+  "Menlo",
+  "Monaco",
+  "Fira Code",
+  "JetBrains Mono",
+  "Source Code Pro",
+  "Ubuntu Mono",
+  "DejaVu Sans Mono",
+  "Courier New",
+];
+
+function detectAvailableFonts(): string[] {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return ["monospace"];
+
+  const testStr = "mmmmmmmmmmlli1|WMwij";
+  const size = "72px";
+
+  ctx.font = `${size} monospace`;
+  const baseWidth = ctx.measureText(testStr).width;
+
+  const available: string[] = [];
+  for (const font of CANDIDATE_FONTS) {
+    ctx.font = `${size} '${font}', monospace`;
+    if (ctx.measureText(testStr).width !== baseWidth) {
+      available.push(font);
+    }
+  }
+  available.push("monospace");
+  return available;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -76,6 +115,9 @@ export default function Settings() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   const s = state.settings;
+
+  const [availableFonts, setAvailableFonts] = useState<string[]>(["monospace"]);
+  useEffect(() => { setAvailableFonts(detectAvailableFonts()); }, []);
 
   // Build the full persisted object from current state and save it
   const persist = useCallback(
@@ -183,14 +225,15 @@ export default function Settings() {
           </Row>
 
           <Row label="Font Family" description="Controls the font family in the editor.">
-            <input
-              className="st-input"
-              type="text"
+            <select
+              className="st-select"
               value={s.fontFamily}
               onChange={(e) => setSetting("fontFamily", e.target.value)}
-              placeholder="Menlo, Monaco, 'Courier New', monospace"
-              spellCheck={false}
-            />
+            >
+              {availableFonts.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
           </Row>
 
           <Row label="Font Size" description="Controls the font size in pixels (8–72).">

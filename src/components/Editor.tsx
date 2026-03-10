@@ -1,5 +1,5 @@
 import { useRef, useCallback, useEffect } from "react";
-import MonacoEditor, { OnMount } from "@monaco-editor/react";
+import MonacoEditor, { BeforeMount, OnMount } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { useEditor } from "../store/editorStore";
 import { watchFile, unwatchFile, unwatchAll } from "../commands/fileWatcher";
@@ -23,6 +23,19 @@ export default function Editor() {
   const prevTabIdsRef = useRef<Set<string>>(new Set());
   const prevTabPathsRef = useRef<Map<string, string>>(new Map()); // tabId → filePath
   const activeTab = state.tabs.find((t) => t.id === activeTabId) ?? null;
+
+  const handleBeforeMount: BeforeMount = useCallback((m) => {
+    m.editor.defineTheme("litecode-light", {
+      base: "vs",
+      inherit: true,
+      rules: [],
+      colors: {
+        "editor.background": "#f3f3f3",
+      },
+    });
+  }, []);
+
+  const monacoTheme = state.theme === "vs" ? "litecode-light" : state.theme;
 
   const handleMount: OnMount = useCallback(
     (editor) => {
@@ -246,7 +259,8 @@ export default function Editor() {
   return (
     <div className="editor-container">
       <MonacoEditor
-        theme={state.theme}
+        theme={monacoTheme}
+        beforeMount={handleBeforeMount}
         onMount={handleMount}
         options={{
           fontSize: state.fontSize,

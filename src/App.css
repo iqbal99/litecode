@@ -228,8 +228,9 @@ body,
   flex: 0 0 auto;
   padding: 0;
   gap: 0;
-  align-items: center;
-  /* pull flush to the right edge on a frameless window */
+  align-items: stretch;
+  align-self: stretch;
+  /* pull flush to the edges on a frameless window */
   margin-right: -12px;
 }
 
@@ -238,7 +239,7 @@ body,
   align-items: center;
   justify-content: center;
   width: 46px;
-  height: 32px;
+  height: 100%;
   background: transparent;
   border: none;
   color: var(--text-secondary);
@@ -397,7 +398,7 @@ body,
   align-items: center;
   gap: 4px;
   height: 100%;
-  padding: 0 12px;
+  padding: 0 6px;
   min-width: 100px;
   max-width: 200px;
   font-size: 12px;
@@ -429,15 +430,15 @@ body,
 }
 .tab-close {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
-  line-height: 18px;
+  font-size: 18px;
+  line-height: 22px;
   text-align: center;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   padding: 0;
   display: flex;

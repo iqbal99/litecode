@@ -50,7 +50,7 @@ export default function TitleBar({ onOpenPalette }: TitleBarProps) {
           <span className="titlebar-search-icon">⌘</span>
           <span className="titlebar-search-label">{label}</span>
           <span className="titlebar-search-hint">⌘P</span>
-          <span className="titlebar-search-hint" style={{ opacity: 0.5, fontSize: "0.75em", marginLeft: 4 }}>⇧⌘P editor</span>
+          <span className="titlebar-search-hint">⇧⌘P</span>
         </button>
       </div>
 

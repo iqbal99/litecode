@@ -58,7 +58,7 @@ export interface EditorSettings {
 }
 
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
-  fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+  fontFamily: "monospace",
   lineHeight: 0,
   fontLigatures: false,
   wordWrapColumn: 80,

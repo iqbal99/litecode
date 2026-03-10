@@ -1,5 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { useEditor } from "./store/editorStore";
 import {
@@ -46,6 +48,25 @@ function App() {
   useEffect(() => {
     (async () => {
       const persisted = await loadSettings();
+
+      // Auto-detect best monospace font if still on generic default
+      if (!persisted.fontFamily || persisted.fontFamily === "monospace") {
+        const preferred = ["Consolas", "Cascadia Mono", "Menlo", "SF Mono", "Monaco"];
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.font = "72px monospace";
+          const baseW = ctx.measureText("mmmmmmmmmmlli1|WMwij").width;
+          for (const f of preferred) {
+            ctx.font = `72px '${f}', monospace`;
+            if (ctx.measureText("mmmmmmmmmmlli1|WMwij").width !== baseW) {
+              persisted.fontFamily = f;
+              break;
+            }
+          }
+        }
+      }
+
       // Legacy fields
       dispatch({ type: "SET_THEME", theme: persisted.theme });
       dispatch({ type: "SET_FONT_SIZE", fontSize: persisted.fontSize });
@@ -245,6 +266,37 @@ function App() {
       .then((fn) => {
         unlisten = fn;
       });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [dispatch]);
+
+  // Handle file paths from CLI args (first launch) and single-instance forwarding
+  useEffect(() => {
+    // 1. Retrieve files that were pending before the webview was ready
+    //    (CLI args on Windows/Linux, macOS Finder open events)
+    invoke<string[]>("take_pending_files")
+      .then((files) => {
+        for (const filePath of files) {
+          if (typeof filePath === "string" && filePath.length > 0) {
+            openFilePath(filePath, dispatch);
+          }
+        }
+      })
+      .catch(console.error);
+
+    // 2. Listen for files forwarded by single-instance plugin or macOS open events
+    let unlisten: (() => void) | undefined;
+    listen<string[]>("open-files", (event) => {
+      for (const filePath of event.payload) {
+        if (typeof filePath === "string" && filePath.length > 0) {
+          openFilePath(filePath, dispatch);
+        }
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
 
     return () => {
       unlisten?.();

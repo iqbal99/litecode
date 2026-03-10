@@ -38,6 +38,143 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["txt", "log", "env", "gitignore"],
+        "description": "Text Files",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": ["md", "markdown"],
+        "description": "Markdown Files",
+        "mimeType": "text/markdown"
+      },
+      {
+        "ext": ["json"],
+        "description": "JSON Files",
+        "mimeType": "application/json"
+      },
+      {
+        "ext": ["js", "jsx", "mjs", "cjs"],
+        "description": "JavaScript Files",
+        "mimeType": "text/javascript"
+      },
+      {
+        "ext": ["ts", "tsx", "mts", "cts"],
+        "description": "TypeScript Files",
+        "mimeType": "text/typescript"
+      },
+      {
+        "ext": ["html", "htm"],
+        "description": "HTML Files",
+        "mimeType": "text/html"
+      },
+      {
+        "ext": ["css", "scss", "less"],
+        "description": "Stylesheets",
+        "mimeType": "text/css"
+      },
+      {
+        "ext": ["py"],
+        "description": "Python Files",
+        "mimeType": "text/x-python"
+      },
+      {
+        "ext": ["rs"],
+        "description": "Rust Files",
+        "mimeType": "text/x-rust"
+      },
+      {
+        "ext": ["go"],
+        "description": "Go Files",
+        "mimeType": "text/x-go"
+      },
+      {
+        "ext": ["java"],
+        "description": "Java Files",
+        "mimeType": "text/x-java"
+      },
+      {
+        "ext": ["c", "cpp", "h", "hpp"],
+        "description": "C/C++ Files",
+        "mimeType": "text/x-c"
+      },
+      {
+        "ext": ["cs"],
+        "description": "C# Files",
+        "mimeType": "text/x-csharp"
+      },
+      {
+        "ext": ["rb"],
+        "description": "Ruby Files",
+        "mimeType": "text/x-ruby"
+      },
+      {
+        "ext": ["php"],
+        "description": "PHP Files",
+        "mimeType": "text/x-php"
+      },
+      {
+        "ext": ["xml"],
+        "description": "XML Files",
+        "mimeType": "application/xml"
+      },
+      {
+        "ext": ["yaml", "yml"],
+        "description": "YAML Files",
+        "mimeType": "text/yaml"
+      },
+      {
+        "ext": ["toml"],
+        "description": "TOML Files",
+        "mimeType": "text/x-toml"
+      },
+      {
+        "ext": ["sh", "bash", "zsh"],
+        "description": "Shell Scripts",
+        "mimeType": "text/x-shellscript"
+      },
+      {
+        "ext": ["sql"],
+        "description": "SQL Files",
+        "mimeType": "text/x-sql"
+      },
+      {
+        "ext": ["swift"],
+        "description": "Swift Files",
+        "mimeType": "text/x-swift"
+      },
+      {
+        "ext": ["kt"],
+        "description": "Kotlin Files",
+        "mimeType": "text/x-kotlin"
+      },
+      {
+        "ext": ["dart"],
+        "description": "Dart Files",
+        "mimeType": "text/x-dart"
+      },
+      {
+        "ext": ["lua"],
+        "description": "Lua Files",
+        "mimeType": "text/x-lua"
+      },
+      {
+        "ext": ["ini", "conf", "cfg"],
+        "description": "Config Files",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": ["dockerfile"],
+        "description": "Dockerfiles",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": ["graphql", "gql"],
+        "description": "GraphQL Files",
+        "mimeType": "text/plain"
+      }
     ]
   }
 }

@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
+import { X } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import { closeTab, saveFile, saveFileAs } from "../commands/fileOps";
 
@@ -147,7 +148,7 @@ export default function TabBar() {
               onClick={(e) => handleClose(e, tab.id)}
               title="Close"
             >
-              ×
+              <X size={14} strokeWidth={2} />
             </button>
           </div>
         ))}
