@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as monaco from "monaco-editor";
 import { useEditor } from "../store/editorStore";
 import { cycleTheme } from "../commands/theme";
-import { saveSetting } from "../commands/settingsService";
 import type { StatusInfo } from "../types";
 
 const DEFAULT_TAB_SIZE = 2;
@@ -52,8 +51,11 @@ export default function StatusBar() {
       .filter((l) => l.id.toLowerCase().includes(lower) || l.name.toLowerCase().includes(lower));
   }, [allLanguages, langFilter]);
 
+  const [langHighlight, setLangHighlight] = useState(-1);
+
   const openLangPicker = useCallback(() => {
     setLangFilter("");
+    setLangHighlight(-1);
     setShowLangPicker(true);
   }, []);
 
@@ -109,12 +111,10 @@ export default function StatusBar() {
   const handleWordWrapToggle = useCallback(() => {
     const next = state.wordWrap === "on" ? "off" : "on";
     dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
-    saveSetting("wordWrap", next);
   }, [state.wordWrap, dispatch]);
 
   const handleMinimapToggle = useCallback(() => {
     dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
-    saveSetting("minimap", !state.minimap);
   }, [state.minimap, dispatch]);
 
   return (
@@ -163,18 +163,33 @@ export default function StatusBar() {
                   type="text"
                   placeholder="Filter languages…"
                   value={langFilter}
-                  onChange={(e) => setLangFilter(e.target.value)}
+                  onChange={(e) => { setLangFilter(e.target.value); setLangHighlight(0); }}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape") closeLangPicker();
-                    if (e.key === "Enter" && filteredLangs[0]) selectLang(filteredLangs[0].id);
+                    if (e.key === "Escape") { closeLangPicker(); return; }
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setLangHighlight((h) => Math.min(h + 1, filteredLangs.length - 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setLangHighlight((h) => Math.max(h - 1, 0));
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      const target = filteredLangs[langHighlight >= 0 ? langHighlight : 0];
+                      if (target) selectLang(target.id);
+                    }
                   }}
                 />
                 <div className="sb-lang-list">
-                  {filteredLangs.map((l) => (
+                  {filteredLangs.map((l, i) => (
                     <div
                       key={l.id}
-                      className={`sb-lang-item${activeTab?.language === l.id ? " sb-lang-current" : ""}`}
+                      className={`sb-lang-item${activeTab?.language === l.id ? " sb-lang-current" : ""}${i === langHighlight ? " sb-lang-highlighted" : ""}`}
                       onClick={() => selectLang(l.id)}
+                      onMouseEnter={() => setLangHighlight(i)}
+                      ref={(el) => { if (i === langHighlight && el) el.scrollIntoView({ block: "nearest" }); }}
                     >
                       <span>{l.name}</span>
                       {activeTab?.language === l.id && (

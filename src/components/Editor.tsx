@@ -7,8 +7,7 @@ import { registerFormatters } from "../commands/formatter";
 import type { Tab } from "../types";
 
 export default function Editor() {
-  const { state, dispatch } = useEditor();
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const { state, dispatch, editorRef } = useEditor();
   const disposablesRef = useRef<monaco.IDisposable[]>([]);
   const activeTabId = state.activeTabId;
 
@@ -115,6 +114,17 @@ export default function Editor() {
 
         editor.setModel(model);
 
+        // Dispose orphaned models after the editor has switched away from them.
+        // This keeps Save As transitions stable for untitled files while still
+        // cleaning up the old in-memory model once no tab references it.
+        if (
+          prevModel &&
+          prevModel !== model &&
+          !state.tabs.some((t) => t.modelUri === prevModel.uri.toString())
+        ) {
+          prevModel.dispose();
+        }
+
         // Seed indentation on newly-opened models:
         // - always for empty/new files (nothing to detect from)
         // - always when detectIndentation is off (user wants their settings forced)
@@ -141,7 +151,7 @@ export default function Editor() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId]);
+  }, [activeTabId, activeTab?.modelUri]);
 
   // Clear or restore diagnostics markers when toggle changes
   useEffect(() => {
@@ -156,15 +166,16 @@ export default function Editor() {
   // Intercept marker changes when diagnostics are disabled
   useEffect(() => {
     if (state.diagnostics) return;
-    const id = setInterval(() => {
-      monaco.editor.getModels().forEach((model) => {
-        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+    const disposable = monaco.editor.onDidChangeMarkers((uris) => {
+      for (const uri of uris) {
+        const markers = monaco.editor.getModelMarkers({ resource: uri });
         if (markers.length > 0) {
-          monaco.editor.setModelMarkers(model, "owner", []);
+          const m = monaco.editor.getModel(uri);
+          if (m) monaco.editor.setModelMarkers(m, "owner", []);
         }
-      });
-    }, 300);
-    return () => clearInterval(id);
+      }
+    });
+    return () => disposable.dispose();
   }, [state.diagnostics]);
 
   // Sync editor options when settings change
@@ -226,7 +237,11 @@ export default function Editor() {
 
     // Start watcher for newly opened tabs that have a real file path
     state.tabs.forEach((tab) => {
-      if (tab.filePath && !prevTabIdsRef.current.has(tab.id)) {
+      const prevPath = prevTabPathsRef.current.get(tab.id);
+      if (prevPath && prevPath !== tab.filePath) {
+        unwatchFile(prevPath);
+      }
+      if (tab.filePath && (prevPath == null || prevPath !== tab.filePath)) {
         watchFile(
           tab,
           () => tabsRef.current.find((t) => t.id === tab.id),
@@ -254,6 +269,7 @@ export default function Editor() {
     unwatchAll();
     disposablesRef.current.forEach((d) => d.dispose());
     disposablesRef.current = [];
+    editorRef.current = null;
   }, []);
 
   if (!activeTab) {

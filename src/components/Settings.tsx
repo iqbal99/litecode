@@ -1,10 +1,9 @@
-import { useRef, useCallback, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { RotateCcw } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import {
   saveSettings,
   DEFAULT_PERSISTED_SETTINGS,
-  type PersistedSettings,
 } from "../commands/settingsService";
 import type { EditorSettings, AppTheme } from "../types";
 import { DEFAULT_EDITOR_SETTINGS } from "../types";
@@ -62,33 +61,17 @@ function detectAvailableFonts(): string[] {
   return available;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function buildCurrent(
-  theme: AppTheme,
-  fontSize: number,
-  wordWrap: "off" | "on",
-  minimap: boolean,
-  settings: EditorSettings
-): PersistedSettings {
-  return {
-    ...settings,
-    theme,
-    fontSize,
-    wordWrap,
-    minimap,
-  };
-}
-
 // ─── Small reusable row ───────────────────────────────────────────────────────
 
 interface RowProps {
   label: string;
   description?: string;
+  hidden?: boolean;
   children: React.ReactNode;
 }
 
-function Row({ label, description, children }: RowProps) {
+function Row({ label, description, hidden, children }: RowProps) {
+  if (hidden) return null;
   return (
     <div className="st-row">
       <div className="st-row-label">
@@ -100,7 +83,8 @@ function Row({ label, description, children }: RowProps) {
   );
 }
 
-function SectionHeader({ id, title }: { id: string; title: string }) {
+function SectionHeader({ id, title, hidden }: { id: string; title: string; hidden?: boolean }) {
+  if (hidden) return null;
   return (
     <h2 id={`section-${id}`} className="st-section-header">
       {title}
@@ -119,47 +103,33 @@ export default function Settings() {
   const [availableFonts, setAvailableFonts] = useState<string[]>(["monospace"]);
   useEffect(() => { setAvailableFonts(detectAvailableFonts()); }, []);
 
-  // Build the full persisted object from current state and save it
-  const persist = useCallback(
-    (patch: Partial<PersistedSettings>) => {
-      const current = buildCurrent(
-        state.theme,
-        state.fontSize,
-        state.wordWrap,
-        state.minimap,
-        state.settings
-      );
-      saveSettings({ ...current, ...patch });
-    },
-    [state]
-  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const q = searchQuery.toLowerCase();
+  const match = (...terms: (string | undefined)[]) =>
+    !q || terms.some((t) => t?.toLowerCase().includes(q));
 
-  // ── Unified change helpers ────────────────────────────────────────────────
+
+  // App.tsx auto-saves all settings whenever state changes, so we only dispatch here.
 
   const setTheme = (v: AppTheme) => {
     dispatch({ type: "SET_THEME", theme: v });
-    persist({ theme: v });
   };
 
   const setFontSize = (v: number) => {
     const clamped = Math.max(8, Math.min(72, v));
     dispatch({ type: "SET_FONT_SIZE", fontSize: clamped });
-    persist({ fontSize: clamped });
   };
 
   const setWordWrap = (v: "off" | "on") => {
     dispatch({ type: "SET_WORD_WRAP", wordWrap: v });
-    persist({ wordWrap: v });
   };
 
   const setMinimap = (v: boolean) => {
     dispatch({ type: "SET_MINIMAP", minimap: v });
-    persist({ minimap: v });
   };
 
   function setSetting<K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) {
     dispatch({ type: "UPDATE_SETTING", key, value: value as EditorSettings[keyof EditorSettings] });
-    persist({ [key]: value } as Partial<PersistedSettings>);
   }
 
   // ── Reset to defaults ─────────────────────────────────────────────────────
@@ -170,6 +140,7 @@ export default function Settings() {
     dispatch({ type: "SET_FONT_SIZE", fontSize: defaults.fontSize });
     dispatch({ type: "SET_WORD_WRAP", wordWrap: defaults.wordWrap });
     dispatch({ type: "SET_MINIMAP", minimap: defaults.minimap });
+    dispatch({ type: "SET_DIAGNOSTICS", diagnostics: defaults.diagnostics });
     dispatch({ type: "LOAD_SETTINGS", settings: { ...DEFAULT_EDITOR_SETTINGS } });
     await saveSettings(defaults);
   };
@@ -186,6 +157,14 @@ export default function Settings() {
       {/* ── Sidebar ── */}
       <aside className="st-sidebar">
         <div className="st-sidebar-header">Settings</div>
+        <input
+          className="st-search-input"
+          type="text"
+          placeholder="Search settings…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          autoFocus
+        />
         <nav className="st-nav">
           {CATEGORIES.map((c) => (
             <button
@@ -210,9 +189,9 @@ export default function Settings() {
         <div className="st-content-inner">
 
           {/* ──────────────────── APPEARANCE ──────────────────── */}
-          <SectionHeader id="appearance" title="Appearance" />
+          <SectionHeader id="appearance" title="Appearance" hidden={!match("Appearance", "Color Theme", "Font Family", "Font Size", "Line Height", "Font Ligatures")} />
 
-          <Row label="Color Theme" description="Select the editor color theme.">
+          <Row label="Color Theme" description="Select the editor color theme." hidden={!match("Color Theme", "Select the editor color theme.")}>
             <select
               className="st-select"
               value={state.theme}
@@ -224,7 +203,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Font Family" description="Controls the font family in the editor.">
+          <Row label="Font Family" description="Controls the font family in the editor." hidden={!match("Font Family", "Controls the font family in the editor.")}>
             <select
               className="st-select"
               value={s.fontFamily}
@@ -236,7 +215,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Font Size" description="Controls the font size in pixels (8–72).">
+          <Row label="Font Size" description="Controls the font size in pixels (8–72)." hidden={!match("Font Size", "Controls the font size in pixels")}>
             <div className="st-number-row">
               <button className="st-stepper" onClick={() => setFontSize(state.fontSize - 1)}>−</button>
               <input
@@ -251,7 +230,7 @@ export default function Settings() {
             </div>
           </Row>
 
-          <Row label="Line Height" description="Controls the line height. Use 0 to automatically compute from font size.">
+          <Row label="Line Height" description="Controls the line height. Use 0 to automatically compute from font size." hidden={!match("Line Height", "Controls the line height")}>
             <div className="st-number-row">
               <button className="st-stepper" onClick={() => setSetting("lineHeight", Math.max(0, s.lineHeight - 1))}>−</button>
               <input
@@ -266,7 +245,7 @@ export default function Settings() {
             </div>
           </Row>
 
-          <Row label="Font Ligatures" description="Enable font ligatures (requires a ligature-enabled font).">
+          <Row label="Font Ligatures" description="Enable font ligatures (requires a ligature-enabled font)." hidden={!match("Font Ligatures", "Enable font ligatures")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -278,9 +257,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── EDITOR ──────────────────── */}
-          <SectionHeader id="editor" title="Editor" />
+          <SectionHeader id="editor" title="Editor" hidden={!match("Editor", "Word Wrap", "Line Numbers", "Minimap", "Whitespace", "Folding", "Links", "Diagnostics")} />
 
-          <Row label="Word Wrap" description="Controls how lines should wrap.">
+          <Row label="Word Wrap" description="Controls how lines should wrap." hidden={!match("Word Wrap", "Controls how lines should wrap")}>
             <select
               className="st-select"
               value={state.wordWrap}
@@ -291,7 +270,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Word Wrap Column" description="Controls the column at which to wrap lines when word wrap is set to bounded.">
+          <Row label="Word Wrap Column" description="Controls the column at which to wrap lines when word wrap is set to bounded." hidden={!match("Word Wrap Column", "Controls the column")}>
             <div className="st-number-row">
               <button className="st-stepper" onClick={() => setSetting("wordWrapColumn", Math.max(1, s.wordWrapColumn - 1))}>−</button>
               <input
@@ -306,7 +285,7 @@ export default function Settings() {
             </div>
           </Row>
 
-          <Row label="Line Numbers" description="Controls the display of line numbers.">
+          <Row label="Line Numbers" description="Controls the display of line numbers." hidden={!match("Line Numbers", "Controls the display of line numbers")}>
             <select
               className="st-select"
               value={s.lineNumbers}
@@ -318,7 +297,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Minimap" description="Controls whether the minimap is shown.">
+          <Row label="Minimap" description="Controls whether the minimap is shown." hidden={!match("Minimap", "Controls whether the minimap")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -329,7 +308,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Minimap Side" description="Controls the side where to render the minimap.">
+          <Row label="Minimap Side" description="Controls the side where to render the minimap." hidden={!match("Minimap Side", "Controls the side where")}>
             <select
               className="st-select"
               value={s.minimapSide}
@@ -340,7 +319,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Render Whitespace" description="Controls how the editor should render whitespace characters.">
+          <Row label="Render Whitespace" description="Controls how the editor should render whitespace characters." hidden={!match("Render Whitespace", "whitespace characters")}>
             <select
               className="st-select"
               value={s.renderWhitespace}
@@ -354,7 +333,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Folding" description="Controls whether the editor has code folding enabled.">
+          <Row label="Folding" description="Controls whether the editor has code folding enabled." hidden={!match("Folding", "code folding")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -365,7 +344,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Links" description="Controls whether the editor should detect links and make them clickable.">
+          <Row label="Links" description="Controls whether the editor should detect links and make them clickable." hidden={!match("Links", "detect links")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -376,10 +355,21 @@ export default function Settings() {
             </label>
           </Row>
 
-          {/* ──────────────────── INDENTATION ──────────────────── */}
-          <SectionHeader id="indentation" title="Indentation" />
+          <Row label="Show Diagnostics" description="Controls whether diagnostic markers (errors, warnings) are shown in the editor." hidden={!match("Diagnostics", "diagnostic markers")}>
+            <label className="st-toggle">
+              <input
+                type="checkbox"
+                checked={state.diagnostics}
+                onChange={(e) => dispatch({ type: "SET_DIAGNOSTICS", diagnostics: e.target.checked })}
+              />
+              <span className="st-toggle-track" />
+            </label>
+          </Row>
 
-          <Row label="Tab Size" description="The number of spaces a tab is equal to.">
+          {/* ──────────────────── INDENTATION ──────────────────── */}
+          <SectionHeader id="indentation" title="Indentation" hidden={!match("Indentation", "Tab Size", "Insert Spaces", "Detect Indentation")} />
+
+          <Row label="Tab Size" description="The number of spaces a tab is equal to." hidden={!match("Tab Size", "spaces a tab")}>
             <div className="st-number-row">
               <button className="st-stepper" onClick={() => setSetting("tabSize", Math.max(1, s.tabSize - 1))}>−</button>
               <input
@@ -394,7 +384,7 @@ export default function Settings() {
             </div>
           </Row>
 
-          <Row label="Insert Spaces" description="Insert spaces when pressing Tab. This setting is overridden based on the file contents when Detect Indentation is on.">
+          <Row label="Insert Spaces" description="Insert spaces when pressing Tab. This setting is overridden based on the file contents when Detect Indentation is on." hidden={!match("Insert Spaces", "spaces when pressing Tab")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -405,7 +395,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Detect Indentation" description="Controls whether to detect indentation from the file content on open.">
+          <Row label="Detect Indentation" description="Controls whether to detect indentation from the file content on open." hidden={!match("Detect Indentation", "detect indentation")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -417,9 +407,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── CURSOR ──────────────────── */}
-          <SectionHeader id="cursor" title="Cursor" />
+          <SectionHeader id="cursor" title="Cursor" hidden={!match("Cursor", "Cursor Blinking", "Cursor Style")} />
 
-          <Row label="Cursor Blinking" description="Controls the cursor animation style.">
+          <Row label="Cursor Blinking" description="Controls the cursor animation style." hidden={!match("Cursor Blinking", "cursor animation")}>
             <select
               className="st-select"
               value={s.cursorBlinking}
@@ -433,7 +423,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Cursor Style" description="Controls the cursor style.">
+          <Row label="Cursor Style" description="Controls the cursor style." hidden={!match("Cursor Style", "Controls the cursor style")}>
             <select
               className="st-select"
               value={s.cursorStyle}
@@ -449,9 +439,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── SCROLLING ──────────────────── */}
-          <SectionHeader id="scrolling" title="Scrolling" />
+          <SectionHeader id="scrolling" title="Scrolling" hidden={!match("Scrolling", "Smooth Scrolling", "Mouse Wheel Zoom", "Scroll Beyond")} />
 
-          <Row label="Smooth Scrolling" description="Controls whether the editor will scroll using an animation.">
+          <Row label="Smooth Scrolling" description="Controls whether the editor will scroll using an animation." hidden={!match("Smooth Scrolling", "scroll using an animation")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -462,7 +452,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Mouse Wheel Zoom" description="Zoom the font of the editor when using mouse wheel and holding Ctrl.">
+          <Row label="Mouse Wheel Zoom" description="Zoom the font of the editor when using mouse wheel and holding Ctrl." hidden={!match("Mouse Wheel Zoom", "mouse wheel")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -473,7 +463,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Scroll Beyond Last Line" description="Controls whether the editor will scroll beyond the last line.">
+          <Row label="Scroll Beyond Last Line" description="Controls whether the editor will scroll beyond the last line." hidden={!match("Scroll Beyond Last Line", "scroll beyond")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -485,9 +475,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── FORMATTING ──────────────────── */}
-          <SectionHeader id="formatting" title="Formatting" />
+          <SectionHeader id="formatting" title="Formatting" hidden={!match("Formatting", "Format On Paste", "Format On Type", "Auto Closing Brackets", "Auto Closing Quotes")} />
 
-          <Row label="Format On Paste" description="Controls whether the editor should automatically format the pasted content.">
+          <Row label="Format On Paste" description="Controls whether the editor should automatically format the pasted content." hidden={!match("Format On Paste", "format the pasted content")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -498,7 +488,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Format On Type" description="Controls whether the editor should automatically format the line after typing.">
+          <Row label="Format On Type" description="Controls whether the editor should automatically format the line after typing." hidden={!match("Format On Type", "format the line after typing")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -509,7 +499,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Auto Closing Brackets" description="Controls whether the editor should auto-close brackets after the user adds an opening bracket.">
+          <Row label="Auto Closing Brackets" description="Controls whether the editor should auto-close brackets after the user adds an opening bracket." hidden={!match("Auto Closing Brackets", "auto-close brackets")}>
             <select
               className="st-select"
               value={s.autoClosingBrackets}
@@ -522,7 +512,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Auto Closing Quotes" description="Controls whether the editor should auto-close quotes after the user adds an opening quote.">
+          <Row label="Auto Closing Quotes" description="Controls whether the editor should auto-close quotes after the user adds an opening quote." hidden={!match("Auto Closing Quotes", "auto-close quotes")}>
             <select
               className="st-select"
               value={s.autoClosingQuotes}
@@ -536,9 +526,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── GUIDES & BRACKETS ──────────────────── */}
-          <SectionHeader id="guides" title="Guides & Brackets" />
+          <SectionHeader id="guides" title="Guides & Brackets" hidden={!match("Guides", "Brackets", "Bracket Pair", "Match Brackets", "Auto Surround")} />
 
-          <Row label="Bracket Pair Colorization" description="Controls whether bracket pair colorization is enabled.">
+          <Row label="Bracket Pair Colorization" description="Controls whether bracket pair colorization is enabled." hidden={!match("Bracket Pair Colorization", "bracket pair colorization")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -549,7 +539,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Bracket Pair Guides" description="Controls whether bracket pair guides are enabled.">
+          <Row label="Bracket Pair Guides" description="Controls whether bracket pair guides are enabled." hidden={!match("Bracket Pair Guides", "bracket pair guides")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -560,7 +550,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Match Brackets" description="Controls whether the editor should highlight matching brackets.">
+          <Row label="Match Brackets" description="Controls whether the editor should highlight matching brackets." hidden={!match("Match Brackets", "highlight matching brackets")}>
             <select
               className="st-select"
               value={s.matchBrackets}
@@ -572,7 +562,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Auto Surround" description="Controls whether the editor should automatically surround selections.">
+          <Row label="Auto Surround" description="Controls whether the editor should automatically surround selections." hidden={!match("Auto Surround", "surround selections")}>
             <select
               className="st-select"
               value={s.autoSurround}
@@ -586,9 +576,9 @@ export default function Settings() {
           </Row>
 
           {/* ──────────────────── SUGGESTIONS ──────────────────── */}
-          <SectionHeader id="suggestions" title="Suggestions" />
+          <SectionHeader id="suggestions" title="Suggestions" hidden={!match("Suggestions", "Quick Suggestions", "Parameter Hints", "Accept Suggestion", "Tab Completion", "Snippet")} />
 
-          <Row label="Quick Suggestions" description="Controls whether suggestions should automatically show up while typing.">
+          <Row label="Quick Suggestions" description="Controls whether suggestions should automatically show up while typing." hidden={!match("Quick Suggestions", "suggestions should automatically")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -599,7 +589,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Parameter Hints" description="Enables a pop-up that shows parameter documentation and type information as you type.">
+          <Row label="Parameter Hints" description="Enables a pop-up that shows parameter documentation and type information as you type." hidden={!match("Parameter Hints", "parameter documentation")}>
             <label className="st-toggle">
               <input
                 type="checkbox"
@@ -610,7 +600,7 @@ export default function Settings() {
             </label>
           </Row>
 
-          <Row label="Accept Suggestion On Enter" description="Controls whether suggestions are accepted with the Enter key, in addition to Tab.">
+          <Row label="Accept Suggestion On Enter" description="Controls whether suggestions are accepted with the Enter key, in addition to Tab." hidden={!match("Accept Suggestion On Enter", "suggestions are accepted")}>
             <select
               className="st-select"
               value={s.acceptSuggestionOnEnter}
@@ -622,7 +612,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Tab Completion" description="Enables tab completions.">
+          <Row label="Tab Completion" description="Enables tab completions." hidden={!match("Tab Completion", "tab completions")}>
             <select
               className="st-select"
               value={s.tabCompletion}
@@ -634,7 +624,7 @@ export default function Settings() {
             </select>
           </Row>
 
-          <Row label="Snippet Suggestions" description="Controls whether snippets are shown with other suggestions and how they are sorted.">
+          <Row label="Snippet Suggestions" description="Controls whether snippets are shown with other suggestions and how they are sorted." hidden={!match("Snippet Suggestions", "snippets are shown")}>
             <select
               className="st-select"
               value={s.snippetSuggestions}

@@ -12,7 +12,7 @@ import {
   saveFileAs,
   closeTab,
 } from "./commands/fileOps";
-import { loadSettings, saveSettings, saveSetting } from "./commands/settingsService";
+import { loadSettings, saveSettings } from "./commands/settingsService";
 import { loadRecentFiles } from "./store/recentFiles";
 import TabBar from "./components/TabBar";
 import Editor from "./components/Editor";
@@ -22,6 +22,8 @@ import CommandPalette from "./components/CommandPalette";
 import TitleBar from "./components/TitleBar";
 import ToolBar from "./components/ToolBar";
 import Settings from "./components/Settings";
+import NotificationCenter from "./components/NotificationCenter";
+import { showNotification } from "./commands/notifications";
 
 function App() {
   const { state, dispatch, editorRef } = useEditor();
@@ -43,6 +45,22 @@ function App() {
   activeTabRef.current = activeTab;
 
   const settingsLoaded = useRef(false);
+
+  const dismissedRef = useRef(new Set<number>());
+  useEffect(() => {
+    const timeouts: number[] = [];
+    for (const n of state.notifications) {
+      if (dismissedRef.current.has(n.id)) continue;
+      dismissedRef.current.add(n.id);
+      timeouts.push(
+        window.setTimeout(() => {
+          dispatch({ type: "CLEAR_NOTIFICATION", id: n.id });
+          dismissedRef.current.delete(n.id);
+        }, 4200)
+      );
+    }
+    return () => timeouts.forEach((t) => window.clearTimeout(t));
+  }, [state.notifications, dispatch]);
 
   // Load persisted settings + recent files on mount
   useEffect(() => {
@@ -72,8 +90,16 @@ function App() {
       dispatch({ type: "SET_FONT_SIZE", fontSize: persisted.fontSize });
       dispatch({ type: "SET_WORD_WRAP", wordWrap: persisted.wordWrap });
       dispatch({ type: "SET_MINIMAP", minimap: persisted.minimap });
+      dispatch({ type: "SET_DIAGNOSTICS", diagnostics: persisted.diagnostics });
       // Additional EditorSettings
-      const { theme: _t, fontSize: _fs, wordWrap: _ww, minimap: _mm, ...editorSettings } = persisted;
+      const {
+        theme: _t,
+        fontSize: _fs,
+        wordWrap: _ww,
+        minimap: _mm,
+        diagnostics: _diag,
+        ...editorSettings
+      } = persisted;
       dispatch({ type: "LOAD_SETTINGS", settings: editorSettings });
       settingsLoaded.current = true;
       const recent = await loadRecentFiles();
@@ -90,8 +116,9 @@ function App() {
       fontSize: state.fontSize,
       wordWrap: state.wordWrap,
       minimap: state.minimap,
+      diagnostics: state.diagnostics,
     });
-  }, [state.theme, state.fontSize, state.wordWrap, state.minimap, state.settings]);
+  }, [state.theme, state.fontSize, state.wordWrap, state.minimap, state.diagnostics, state.settings]);
 
   // Sync native window theme with app theme (affects window borders/chrome on Windows)
   useEffect(() => {
@@ -163,18 +190,15 @@ function App() {
         editorRef.current?.getAction("editor.action.gotoLine")?.run();
       } else if (mod && e.key === "=") {
         e.preventDefault();
-        const next = Math.min(s.fontSize + 1, 40);
+        const next = Math.min(s.fontSize + 1, 72);
         dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-        saveSetting("fontSize", next);
       } else if (mod && e.key === "-") {
         e.preventDefault();
         const next = Math.max(s.fontSize - 1, 8);
         dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-        saveSetting("fontSize", next);
       } else if (mod && e.key === "0") {
         e.preventDefault();
         dispatch({ type: "SET_FONT_SIZE", fontSize: 14 });
-        saveSetting("fontSize", 14);
       } else if (mod && e.key === ",") {
         e.preventDefault();
         dispatch({ type: s.isSettingsOpen ? "CLOSE_SETTINGS" : "OPEN_SETTINGS" });
@@ -284,7 +308,9 @@ function App() {
           }
         }
       })
-      .catch(console.error);
+      .catch(() => {
+        showNotification(dispatch, "error", "LiteCode could not restore files passed in on launch.");
+      });
 
     // 2. Listen for files forwarded by single-instance plugin or macOS open events
     let unlisten: (() => void) | undefined;
@@ -326,6 +352,7 @@ function App() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <NotificationCenter />
       <TitleBar onOpenPalette={() => openPalette("")} />
       <ToolBar />
       {hasOpenTabs && <TabBar />}

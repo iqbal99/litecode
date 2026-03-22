@@ -14,6 +14,7 @@ export const initialState: EditorState = {
   settings: { ...DEFAULT_EDITOR_SETTINGS },
   isSettingsOpen: false,
   diagnostics: true,
+  notifications: [],
 };
 
 export function editorReducer(
@@ -89,6 +90,22 @@ export function editorReducer(
         ),
       };
 
+    case "UPDATE_TAB_FILE_INFO":
+      return {
+        ...state,
+        tabs: state.tabs.map((t) =>
+          t.id === action.tabId
+            ? {
+                ...t,
+                filePath: action.filePath,
+                fileName: action.fileName,
+                language: action.language,
+                modelUri: action.modelUri,
+              }
+            : t
+        ),
+      };
+
     case "UPDATE_CURSOR":
       return {
         ...state,
@@ -109,7 +126,7 @@ export function editorReducer(
       return { ...state, theme: action.theme };
 
     case "SET_FONT_SIZE":
-      return { ...state, fontSize: Math.max(8, Math.min(32, action.fontSize)) };
+      return { ...state, fontSize: Math.max(8, Math.min(72, action.fontSize)) };
 
     case "SET_WORD_WRAP":
       return { ...state, wordWrap: action.wordWrap };
@@ -178,6 +195,17 @@ export function editorReducer(
 
     case "SET_DIAGNOSTICS":
       return { ...state, diagnostics: action.diagnostics };
+
+    case "SHOW_NOTIFICATION": {
+      const next = [...state.notifications, action.notification];
+      return { ...state, notifications: next.slice(-5) };
+    }
+
+    case "CLEAR_NOTIFICATION":
+      return {
+        ...state,
+        notifications: state.notifications.filter((n) => n.id !== action.id),
+      };
 
     default:
       return state;

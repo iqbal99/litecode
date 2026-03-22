@@ -1,7 +1,10 @@
 import { useCallback } from "react";
+import { exists } from "@tauri-apps/plugin-fs";
+import { FilePlus, FolderOpen, Clock, Trash2 } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import { newFile, openFile, openFilePath } from "../commands/fileOps";
-import { clearRecentFiles } from "../store/recentFiles";
+import { clearRecentFiles, saveRecentFiles } from "../store/recentFiles";
+import { sc } from "../utils/platform";
 
 export default function Welcome() {
   const { state, dispatch } = useEditor();
@@ -15,10 +18,18 @@ export default function Welcome() {
   }, [dispatch]);
 
   const handleOpenRecent = useCallback(
-    (path: string) => {
-      openFilePath(path, dispatch);
+    async (path: string) => {
+      const opened = await openFilePath(path, dispatch);
+      if (!opened) {
+        const missing = !(await exists(path).catch(() => true));
+        if (missing) {
+          const nextRecent = state.recentFiles.filter((entry) => entry !== path);
+          dispatch({ type: "SET_RECENT_FILES", recentFiles: nextRecent });
+          await saveRecentFiles(nextRecent);
+        }
+      }
     },
-    [dispatch]
+    [dispatch, state.recentFiles]
   );
 
   const handleClearRecent = useCallback(async () => {
@@ -43,26 +54,27 @@ export default function Welcome() {
 
         <div className="welcome-actions">
           <button className="welcome-btn" onClick={handleNew}>
-            <span className="welcome-btn-icon">📄</span>
+            <span className="welcome-btn-icon"><FilePlus size={18} /></span>
             New File
-            <span className="welcome-shortcut">⌘N</span>
+            <span className="welcome-shortcut">{sc("⌘N", "Ctrl+N")}</span>
           </button>
           <button className="welcome-btn" onClick={handleOpen}>
-            <span className="welcome-btn-icon">📂</span>
+            <span className="welcome-btn-icon"><FolderOpen size={18} /></span>
             Open File
-            <span className="welcome-shortcut">⌘O</span>
+            <span className="welcome-shortcut">{sc("⌘O", "Ctrl+O")}</span>
           </button>
         </div>
 
         {state.recentFiles.length > 0 && (
           <div className="welcome-recent">
             <div className="welcome-recent-header">
-              <h2>Recent Files</h2>
+              <h2><Clock size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Recent Files</h2>
               <button
                 className="welcome-clear-btn"
                 onClick={handleClearRecent}
                 title="Clear recent files"
               >
+                <Trash2 size={11} style={{ verticalAlign: -1, marginRight: 4 }} />
                 Clear
               </button>
             </div>
@@ -85,9 +97,9 @@ export default function Welcome() {
 
         <div className="welcome-footer">
           <p>
-            <kbd>⌘P</kbd> Command Palette &nbsp;·&nbsp;{" "}
-            <kbd>⌘S</kbd> Save &nbsp;·&nbsp;{" "}
-            <kbd>⌘W</kbd> Close Tab
+            <kbd>{sc("⌘P", "Ctrl+P")}</kbd> Command Palette &nbsp;·&nbsp;{" "}
+            <kbd>{sc("⌘S", "Ctrl+S")}</kbd> Save &nbsp;·&nbsp;{" "}
+            <kbd>{sc("⌘W", "Ctrl+W")}</kbd> Close Tab
           </p>
         </div>
       </div>

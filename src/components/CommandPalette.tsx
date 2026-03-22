@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as monaco from "monaco-editor";
+import { Database, File, FileCode2, FileJson2, FileText, Palette, Search, Terminal } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import {
   newFile,
@@ -10,7 +11,7 @@ import {
   closeTab,
 } from "../commands/fileOps";
 import { cycleTheme } from "../commands/theme";
-import { saveSetting } from "../commands/settingsService";
+import { sc } from "../utils/platform";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,11 +52,14 @@ interface CommandPaletteProps {
 
 // ─── Static mode menu ─────────────────────────────────────────────────────────
 
-const MODES: ModeEntry[] = [
-  { id: "goto-file",   label: "Go to File",                tag: "",      shortcut: ["⌘", "P"] },
-  { id: "run-command", label: "Show and Run Commands",     tag: ">",     shortcut: ["⇧", "⌘", "P"] },
-  { id: "search-text", label: "Search Text in Open Files", tag: "%" },
-];
+function getModes(): ModeEntry[] {
+  return [
+    { id: "goto-file",   label: "Go to File",                tag: "",      shortcut: sc("⌘", "Ctrl").split("+").concat(["P"]) },
+    { id: "run-command", label: "Show and Run Commands",     tag: ">",     shortcut: sc("⇧,⌘,P", "Ctrl,Shift,P").split(",") },
+    { id: "search-text", label: "Search Text in Open Files", tag: "%" },
+  ];
+}
+const MODES: ModeEntry[] = getModes();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,22 +79,33 @@ function dirname(p: string) {
   return parts.join("/") || "/";
 }
 
-function getFileIcon(name: string): string {
+function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "TS", tsx: "⚛", js: "JS", jsx: "⚛", json: "{}", html: "<>",
-    css: "◈", scss: "◈", less: "◈", md: "M↓", py: "Py",
-    rs: "Rs", go: "Go", java: "Jv", rb: "Rb", php: "Php",
-    sh: "$_", sql: "DB", xml: "<>", yaml: "YM", yml: "YM",
-    toml: "TM", txt: "T_", log: "L_", c: "C_", cpp: "C+",
-  };
-  return map[ext] ?? "F_";
+  if (["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "rb", "php", "c", "cpp"].includes(ext)) {
+    return <FileCode2 size={14} aria-hidden />;
+  }
+  if (["json", "toml", "yaml", "yml"].includes(ext)) {
+    return <FileJson2 size={14} aria-hidden />;
+  }
+  if (["sql"].includes(ext)) {
+    return <Database size={14} aria-hidden />;
+  }
+  if (["css", "scss", "less"].includes(ext)) {
+    return <Palette size={14} aria-hidden />;
+  }
+  if (["sh"].includes(ext)) {
+    return <Terminal size={14} aria-hidden />;
+  }
+  if (["md", "txt", "log", "xml", "html"].includes(ext)) {
+    return <FileText size={14} aria-hidden />;
+  }
+  return <File size={14} aria-hidden />;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function CommandPalette({ visible, prefill = "", onClose }: CommandPaletteProps) {
-  const { state, dispatch } = useEditor();
+  const { state, dispatch, editorRef } = useEditor();
 
   const [query, setQuery]       = useState("");
   const [selected, setSelected] = useState(0);
@@ -112,26 +127,26 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
   const appCommands = useMemo<AppCommand[]>(
     () => [
       {
-        id: "new-file", label: "New File", shortcut: ["⌘", "N"],
+        id: "new-file", label: "New File", shortcut: sc("⌘,N", "Ctrl,N").split(","),
         action: () => newFile(dispatch),
       },
       {
-        id: "open-file", label: "Open File…", shortcut: ["⌘", "O"],
+        id: "open-file", label: "Open File…", shortcut: sc("⌘,O", "Ctrl,O").split(","),
         action: () => openFile(dispatch),
       },
       {
-        id: "save", label: "Save", shortcut: ["⌘", "S"],
+        id: "save", label: "Save", shortcut: sc("⌘,S", "Ctrl,S").split(","),
         action: () => {
           if (!activeTab) return;
           activeTab.filePath ? saveFile(activeTab, dispatch) : saveFileAs(activeTab, dispatch);
         },
       },
       {
-        id: "save-as", label: "Save As…", shortcut: ["⇧", "⌘", "S"],
+        id: "save-as", label: "Save As…", shortcut: sc("⇧,⌘,S", "Ctrl,Shift,S").split(","),
         action: () => { if (activeTab) saveFileAs(activeTab, dispatch); },
       },
       {
-        id: "close-tab", label: "Close Editor", shortcut: ["⌘", "W"],
+        id: "close-tab", label: "Close Editor", shortcut: sc("⌘,W", "Ctrl,W").split(","),
         action: () => { if (activeTab) closeTab(activeTab, dispatch); },
       },
       {
@@ -143,49 +158,44 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
         action: () => {
           const next = state.wordWrap === "on" ? "off" : "on";
           dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
-          saveSetting("wordWrap", next);
         },
       },
       {
         id: "toggle-minimap", label: "Toggle Minimap",
         action: () => {
           dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
-          saveSetting("minimap", !state.minimap);
         },
       },
       {
-        id: "increase-font", label: "Increase Font Size", shortcut: ["⌘", "="],
+        id: "increase-font", label: "Increase Font Size", shortcut: sc("⌘,=", "Ctrl,=").split(","),
         action: () => {
-          const next = Math.min(state.fontSize + 1, 40);
+          const next = Math.min(state.fontSize + 1, 72);
           dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-          saveSetting("fontSize", next);
         },
       },
       {
-        id: "decrease-font", label: "Decrease Font Size", shortcut: ["⌘", "-"],
+        id: "decrease-font", label: "Decrease Font Size", shortcut: sc("⌘,-", "Ctrl,-").split(","),
         action: () => {
           const next = Math.max(state.fontSize - 1, 8);
           dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-          saveSetting("fontSize", next);
         },
       },
       {
-        id: "reset-font", label: "Reset Font Size", shortcut: ["⌘", "0"],
+        id: "reset-font", label: "Reset Font Size", shortcut: sc("⌘,0", "Ctrl,0").split(","),
         action: () => {
           dispatch({ type: "SET_FONT_SIZE", fontSize: 14 });
-          saveSetting("fontSize", 14);
         },
       },
       {
-        id: "format-document", label: "Format Document", shortcut: ["⇧", "⌥", "F"],
+        id: "format-document", label: "Format Document", shortcut: sc("⇧,⌥,F", "Shift,Alt,F").split(","),
         action: () => {
-          const editor = monaco.editor.getEditors()[0];
+          const editor = editorRef.current;
           editor?.getAction("editor.action.formatDocument")?.run();
         },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.theme, state.wordWrap, state.minimap, state.fontSize, activeTab, dispatch]
+    [state.theme, state.wordWrap, state.minimap, state.fontSize, activeTab, dispatch, editorRef]
   );
 
   // ── Derived / filtered lists ───────────────────────────────────────────────
@@ -289,7 +299,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     requestAnimationFrame(() => {
       dispatch({ type: "SET_ACTIVE_TAB", tabId: targetTabId });
       setTimeout(() => {
-        const ed = monaco.editor.getEditors()[0] as monaco.editor.IStandaloneCodeEditor | undefined;
+        const ed = editorRef.current;
         if (ed) {
           ed.revealLineInCenter(targetLine);
           ed.setPosition({ lineNumber: targetLine, column: 1 });
@@ -297,7 +307,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
         }
       }, 80);
     });
-  }, [dispatch, onClose]);
+  }, [dispatch, editorRef, onClose]);
 
   // Activate a mode entry: if it has a prefix-tag, switch to that mode;
   // if it's "goto-file" (no tag) we're already in file mode — do nothing special.
@@ -383,9 +393,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
 
         {/* ── Input row ── */}
         <div className="cp-input-row">
-          <svg className="cp-search-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M6.5 1a5.5 5.5 0 1 0 3.613 9.72l3.082 3.083a.5.5 0 0 0 .707-.708L10.82 10.01A5.5 5.5 0 0 0 6.5 1zm-4.5 5.5a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0z"/>
-          </svg>
+          <Search className="cp-search-icon" size={16} aria-hidden />
           <input
             ref={inputRef}
             className="cp-input"

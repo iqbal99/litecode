@@ -3,10 +3,36 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import * as monaco from "monaco-editor";
 import type { Dispatch } from "react";
 import type { EditorAction, Tab } from "../types";
+import { showNotification } from "./notifications";
 
 type UnwatchFn = () => void;
 
 const watchers = new Map<string, UnwatchFn>();
+const missingWarnings = new Set<string>();
+const suppressedPaths = new Set<string>();
+
+/**
+ * Temporarily suppress watcher events for a path (used during saves
+ * so the app's own writes don't trigger reload prompts or re-dirty the tab).
+ */
+export function suppressPath(filePath: string): void {
+  suppressedPaths.add(filePath);
+}
+
+export function unsuppressPath(filePath: string): void {
+  suppressedPaths.delete(filePath);
+}
+
+function isFileEventType(event: unknown, key: "modify" | "remove" | "create"): boolean {
+  return (
+    event != null &&
+    typeof event === "object" &&
+    "type" in event &&
+    typeof event.type === "object" &&
+    event.type != null &&
+    key in (event.type as Record<string, unknown>)
+  );
+}
 
 /**
  * Start watching a file for external changes.
@@ -26,22 +52,33 @@ export async function watchFile(
 
   try {
     const unwatch = await watch(filePath, async (event) => {
-      // We care about modify events
       const kinds = Array.isArray(event) ? event : [event];
-      const isModify = kinds.some(
-        (e) =>
-          e.type != null &&
-          typeof e.type === "object" &&
-          "modify" in (e.type as Record<string, unknown>)
-      );
+      const isModify = kinds.some((e) => isFileEventType(e, "modify"));
+      const isRemove = kinds.some((e) => isFileEventType(e, "remove"));
+      const isCreate = kinds.some((e) => isFileEventType(e, "create"));
 
-      if (!isModify) return;
+      if (!isModify && !isRemove && !isCreate) return;
+
+      if (suppressedPaths.has(filePath)) return;
 
       const latestTab = getLatestTab();
       if (!latestTab) return;
 
+      if (isRemove) {
+        if (!missingWarnings.has(filePath)) {
+          missingWarnings.add(filePath);
+          showNotification(
+            dispatch,
+            "warning",
+            `"${latestTab.fileName}" was deleted or moved. The buffer stays open until you save it again.`
+          );
+        }
+        return;
+      }
+
       try {
         const content = await readTextFile(filePath);
+        missingWarnings.delete(filePath);
         const model = monaco.editor.getModel(
           monaco.Uri.parse(latestTab.modelUri)
         );
@@ -64,14 +101,17 @@ export async function watchFile(
         model.setValue(content);
         dispatch({ type: "MARK_CLEAN", tabId: latestTab.id });
       } catch {
-        // File might have been deleted
-        console.warn("Failed to reload file:", filePath);
+        if (!missingWarnings.has(filePath)) {
+          missingWarnings.add(filePath);
+          showNotification(dispatch, "warning", `LiteCode could not reload "${latestTab.fileName}" from disk.`);
+        }
       }
     });
 
     watchers.set(filePath, unwatch as unknown as UnwatchFn);
   } catch (err) {
     console.error("Failed to watch file:", filePath, err);
+    showNotification(dispatch, "warning", `LiteCode could not watch "${tab.fileName}" for external changes.`);
   }
 }
 
@@ -84,6 +124,7 @@ export function unwatchFile(filePath: string): void {
     unwatch();
     watchers.delete(filePath);
   }
+  missingWarnings.delete(filePath);
 }
 
 /**
@@ -93,5 +134,6 @@ export function unwatchAll(): void {
   for (const [id, unwatch] of watchers) {
     unwatch();
     watchers.delete(id);
+    missingWarnings.delete(id);
   }
 }

@@ -1,14 +1,13 @@
 import { useCallback, useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
+import { Command, Maximize2, Minimize2, Search, X } from "lucide-react";
 import { useEditor } from "../store/editorStore";
+import { isMac, sc } from "../utils/platform";
 
 interface TitleBarProps {
   onOpenPalette: () => void;
 }
-
-// Detect platform once at module load — avoids re-computing per render
-const isMac = navigator.userAgent.includes("Macintosh");
 
 const winMinimize = () => { getCurrentWindow().minimize().catch(console.error); };
 const winMaximize = () => { getCurrentWindow().toggleMaximize().catch(console.error); };
@@ -45,12 +44,12 @@ export default function TitleBar({ onOpenPalette }: TitleBarProps) {
         <button
           className="titlebar-search"
           onClick={handleClick}
-          title="Files & App Commands (⌘P) · ⇧⌘P for editor commands"
+          title={`Files & App Commands (${sc("⌘P", "Ctrl+P")}) · ${sc("⇧⌘P", "Ctrl+Shift+P")} for editor commands`}
         >
-          <span className="titlebar-search-icon">⌘</span>
+          <span className="titlebar-search-icon"><Search size={13} aria-hidden /></span>
           <span className="titlebar-search-label">{label}</span>
-          <span className="titlebar-search-hint">⌘P</span>
-          <span className="titlebar-search-hint">⇧⌘P</span>
+          <span className="titlebar-search-hint"><Command size={12} aria-hidden />{sc("P", "Ctrl+P")}</span>
+          <span className="titlebar-search-hint">{sc("⇧⌘P", "Ctrl+⇧+P")}</span>
         </button>
       </div>
 
@@ -64,26 +63,17 @@ export default function TitleBar({ onOpenPalette }: TitleBarProps) {
           {appVersion && <span className="titlebar-app-name" style={{ marginRight: 8 }}>v{appVersion}</span>}
           {/* Minimize */}
           <button className="titlebar-wc-btn" onClick={winMinimize} title="Minimize">
-            <svg width="12" height="2" viewBox="0 0 12 2" fill="currentColor" aria-hidden>
-              <rect width="12" height="1.5" y="0.25" rx="0.5" />
-            </svg>
+            <Minimize2 size={13} aria-hidden />
           </button>
 
           {/* Maximize / Restore */}
           <button className="titlebar-wc-btn" onClick={winMaximize} title="Maximize">
-            <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
-                 stroke="currentColor" strokeWidth="1.2" aria-hidden>
-              <rect x="0.6" y="0.6" width="9.8" height="9.8" rx="0.5" />
-            </svg>
+            <Maximize2 size={13} aria-hidden />
           </button>
 
           {/* Close */}
           <button className="titlebar-wc-btn titlebar-wc-close" onClick={winClose} title="Close">
-            <svg width="12" height="12" viewBox="0 0 12 12"
-                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
-              <line x1="1" y1="1" x2="11" y2="11" />
-              <line x1="11" y1="1" x2="1"  y2="11" />
-            </svg>
+            <X size={13} aria-hidden />
           </button>
         </div>
       )}

@@ -37,9 +37,12 @@ export default function TabBar() {
     (e: React.MouseEvent, tabId: string) => {
       e.preventDefault();
       const tab = state.tabs.find((t) => t.id === tabId);
-      // No context menu for the settings tab
       if (tab?.isSettings) return;
-      setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+      const menuW = 180;
+      const menuH = 160;
+      const x = Math.min(e.clientX, window.innerWidth - menuW);
+      const y = Math.min(e.clientY, window.innerHeight - menuH);
+      setContextMenu({ x, y, tabId });
     },
     [state]
   );
@@ -48,7 +51,8 @@ export default function TabBar() {
     async (tabId: string) => {
       const others = state.tabs.filter((t) => t.id !== tabId && !t.isSettings);
       for (const tab of others) {
-        await closeTab(tab, dispatch);
+        const closed = await closeTab(tab, dispatch);
+        if (!closed) return;
       }
       setContextMenu(null);
     },
@@ -60,7 +64,8 @@ export default function TabBar() {
       if (tab.isSettings) {
         dispatch({ type: "CLOSE_SETTINGS" });
       } else {
-        await closeTab(tab, dispatch);
+        const closed = await closeTab(tab, dispatch);
+        if (!closed) return;
       }
     }
     setContextMenu(null);
@@ -69,7 +74,8 @@ export default function TabBar() {
   const handleCloseSaved = useCallback(async () => {
     const saved = state.tabs.filter((t) => !t.isDirty && !t.isSettings);
     for (const tab of saved) {
-      await closeTab(tab, dispatch);
+      const closed = await closeTab(tab, dispatch);
+      if (!closed) return;
     }
     setContextMenu(null);
   }, [state, dispatch]);

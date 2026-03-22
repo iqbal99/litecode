@@ -100,6 +100,65 @@ body,
   position: relative;
 }
 
+.notification-stack {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.notification {
+  min-width: 280px;
+  max-width: min(520px, calc(100vw - 24px));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 94%, black 6%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  pointer-events: auto;
+}
+
+.notification--info {
+  border-left-color: var(--accent);
+}
+
+.notification--warning {
+  border-left-color: #d9a441;
+}
+
+.notification--error {
+  border-left-color: #d85d5d;
+}
+
+.notification-message {
+  flex: 1;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.notification-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.notification-close:hover {
+  color: var(--text-primary);
+}
+
 .editor-area {
   flex: 1;
   min-height: 0;
@@ -186,7 +245,9 @@ body,
 }
 
 .titlebar-search-icon {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.6;
   flex-shrink: 0;
 }
@@ -200,6 +261,9 @@ body,
 }
 
 .titlebar-search-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex-shrink: 0;
   font-size: 11px;
   opacity: 0.45;
@@ -422,6 +486,15 @@ body,
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.tab.dirty .tab-name {
+  font-style: italic;
+}
+.tab.tab-settings {
+  min-width: 80px;
+}
+.tab.tab-settings .tab-name {
+  opacity: 0.85;
 }
 .tab-dirty-dot {
   color: var(--dirty-dot);
@@ -820,17 +893,15 @@ body,
 
 /* File icon (short text label) */
 .cp-file-icon {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   background: rgba(255,255,255,0.07);
-  border-radius: 3px;
-  padding: 1px 4px;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
-  min-width: 22px;
-  text-align: center;
-  letter-spacing: -0.02em;
 }
 
 .cp-selected .cp-file-icon {
@@ -922,7 +993,8 @@ body,
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 .app.drag-over {
-  /* subtle visual hint */
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ---------- StatusBar Inline Language Picker ---------- */
@@ -971,7 +1043,8 @@ body,
   user-select: none;
 }
 
-.sb-lang-item:hover {
+.sb-lang-item:hover,
+.sb-lang-item.sb-lang-highlighted {
   background: var(--bg-hover);
 }
 

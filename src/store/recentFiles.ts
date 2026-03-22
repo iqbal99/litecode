@@ -30,19 +30,6 @@ export async function saveRecentFiles(files: string[]): Promise<void> {
 }
 
 /**
- * Add a file to the recent files list and persist.
- */
-export async function addRecentFile(
-  filePath: string,
-  currentList: string[]
-): Promise<string[]> {
-  const filtered = currentList.filter((f) => f !== filePath);
-  const updated = [filePath, ...filtered].slice(0, MAX_RECENT);
-  await saveRecentFiles(updated);
-  return updated;
-}
-
-/**
  * Add a single file to the persistent store (fire-and-forget safe).
  * Call this whenever a file is opened; it deduplicates and trims to MAX_RECENT.
  * Uses a promise queue to serialize writes and prevent lost updates.

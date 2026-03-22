@@ -33,6 +33,25 @@
   border-bottom: 1px solid var(--border);
 }
 
+.st-search-input {
+  margin: 8px 10px 0;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-family);
+  outline: none;
+  box-sizing: border-box;
+}
+.st-search-input:focus {
+  border-color: var(--accent);
+}
+.st-search-input::placeholder {
+  color: var(--text-muted);
+}
+
 .st-nav {
   flex: 1;
   padding: 6px 0;

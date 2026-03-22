@@ -1,8 +1,7 @@
-import * as monaco from "monaco-editor";
 import {
-  FilePlus, FolderOpen, Save, SaveAll, XCircle,
+  FilePlus, FolderOpen, Save, FilePenLine, XCircle,
   Undo2, Redo2,
-  Braces, Hash, ChevronsDownUp, ChevronsUpDown, Terminal,
+  WandSparkles, MessageSquareCode, ChevronsDownUp, ChevronsUpDown, Command,
   Search, Replace,
   WrapText, Map, Palette,
   AArrowDown, AArrowUp,
@@ -11,7 +10,7 @@ import {
   CaseUpper, CaseLower, CaseSensitive,
   Indent, Outdent, Eraser, TextSelect,
   Settings2,
-  CircleSlash2,
+  CircleAlert,
 } from "lucide-react";
 import { useEditor } from "../store/editorStore";
 import {
@@ -22,14 +21,7 @@ import {
   closeTab,
 } from "../commands/fileOps";
 import { cycleTheme } from "../commands/theme";
-import { saveSetting } from "../commands/settingsService";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getEditor(): monaco.editor.IStandaloneCodeEditor | null {
-  const editors = monaco.editor.getEditors();
-  return editors.length > 0 ? (editors[0] as monaco.editor.IStandaloneCodeEditor) : null;
-}
+import { sc } from "../utils/platform";
 
 // ─── Icon Button ─────────────────────────────────────────────────────────────
 
@@ -59,21 +51,14 @@ function Sep() {
   return <span className="tb-sep" aria-hidden="true" />;
 }
 
-// ─── Platform-aware shortcut labels ──────────────────────────────────────────
-
-const isMac = navigator.userAgent.includes("Macintosh");
-
-/** Returns `mac` on macOS, `win` on Windows/Linux */
-const sc = (mac: string, win: string) => (isMac ? mac : win);
-
-
-const IC = 18; // icon size for all toolbar icons
+const IC = 18;
 
 export default function ToolBar() {
-  const { state, dispatch } = useEditor();
+  const { state, dispatch, editorRef } = useEditor();
+  const getEditor = () => editorRef.current;
 
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
-  const hasTab = !!activeTab;
+  const hasEditorTab = state.tabs.some((t) => !t.isSettings) && !activeTab?.isSettings;
   const isDirty = activeTab?.isDirty ?? false;
 
   // File ops
@@ -104,11 +89,9 @@ export default function ToolBar() {
   const handleWordWrap = () => {
     const next = state.wordWrap === "on" ? "off" : "on";
     dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
-    saveSetting("wordWrap", next);
   };
   const handleMinimap = () => {
     dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
-    saveSetting("minimap", !state.minimap);
   };
   const handleTheme = () => cycleTheme(state.theme, dispatch);
 
@@ -116,12 +99,10 @@ export default function ToolBar() {
   const handleFontDec = () => {
     const next = Math.max(state.fontSize - 1, 8);
     dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-    saveSetting("fontSize", next);
   };
   const handleFontInc = () => {
-    const next = Math.min(state.fontSize + 1, 40);
+    const next = Math.min(state.fontSize + 1, 72);
     dispatch({ type: "SET_FONT_SIZE", fontSize: next });
-    saveSetting("fontSize", next);
   };
 
   // Editor command palette (Monaco built-in ⇧⌘P)
@@ -159,36 +140,36 @@ export default function ToolBar() {
       <div className="tb-group">
         <IconBtn label={`New File  ${sc("⌘N", "Ctrl+N")}`} onClick={handleNew}><FilePlus size={IC} /></IconBtn>
         <IconBtn label={`Open File  ${sc("⌘O", "Ctrl+O")}`} onClick={handleOpen}><FolderOpen size={IC} /></IconBtn>
-        <IconBtn label={`Save${isDirty ? " ●" : ""}  ${sc("⌘S", "Ctrl+S")}`} onClick={handleSave} disabled={!hasTab}><Save size={IC} /></IconBtn>
-        <IconBtn label={`Save As…  ${sc("⇧⌘S", "Ctrl+Shift+S")}`} onClick={handleSaveAs} disabled={!hasTab}><SaveAll size={IC} /></IconBtn>
-        <IconBtn label={`Close Editor  ${sc("⌘W", "Ctrl+W")}`} onClick={handleClose} disabled={!hasTab}><XCircle size={IC} /></IconBtn>
+        <IconBtn label={`Save${isDirty ? " ●" : ""}  ${sc("⌘S", "Ctrl+S")}`} onClick={handleSave} disabled={!hasEditorTab}><Save size={IC} /></IconBtn>
+        <IconBtn label={`Save As…  ${sc("⇧⌘S", "Ctrl+Shift+S")}`} onClick={handleSaveAs} disabled={!hasEditorTab}><FilePenLine size={IC} /></IconBtn>
+        <IconBtn label={`Close Editor  ${sc("⌘W", "Ctrl+W")}`} onClick={handleClose} disabled={!hasEditorTab}><XCircle size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
       {/* ── Group 2: Edit ── */}
       <div className="tb-group">
-        <IconBtn label={`Undo  ${sc("⌘Z", "Ctrl+Z")}`} onClick={handleUndo} disabled={!hasTab}><Undo2 size={IC} /></IconBtn>
-        <IconBtn label={`Redo  ${sc("⇧⌘Z", "Ctrl+Y")}`} onClick={handleRedo} disabled={!hasTab}><Redo2 size={IC} /></IconBtn>
+        <IconBtn label={`Undo  ${sc("⌘Z", "Ctrl+Z")}`} onClick={handleUndo} disabled={!hasEditorTab}><Undo2 size={IC} /></IconBtn>
+        <IconBtn label={`Redo  ${sc("⇧⌘Z", "Ctrl+Y")}`} onClick={handleRedo} disabled={!hasEditorTab}><Redo2 size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
       {/* ── Group 3: Code ── */}
       <div className="tb-group">
-        <IconBtn label={`Format Document  ${sc("⇧⌥F", "Shift+Alt+F")}`} onClick={handleFormat} disabled={!hasTab}><Braces size={IC} /></IconBtn>
-        <IconBtn label={`Toggle Line Comment  ${sc("⌘/", "Ctrl+/")}`} onClick={handleComment} disabled={!hasTab}><Hash size={IC} /></IconBtn>
-        <IconBtn label={`Fold All  ${sc("⌘K ⌘0", "Ctrl+K Ctrl+0")}`} onClick={handleFold} disabled={!hasTab}><ChevronsDownUp size={IC} /></IconBtn>
-        <IconBtn label={`Unfold All  ${sc("⌘K ⌘J", "Ctrl+K Ctrl+J")}`} onClick={handleUnfold} disabled={!hasTab}><ChevronsUpDown size={IC} /></IconBtn>
-        <IconBtn label={`Editor Commands  ${sc("⇧⌘P", "Ctrl+Shift+P")}`} onClick={handleEditorCommands} disabled={!hasTab}><Terminal size={IC} /></IconBtn>
+        <IconBtn label={`Format Document  ${sc("⇧⌥F", "Shift+Alt+F")}`} onClick={handleFormat} disabled={!hasEditorTab}><WandSparkles size={IC} /></IconBtn>
+        <IconBtn label={`Toggle Line Comment  ${sc("⌘/", "Ctrl+/")}`} onClick={handleComment} disabled={!hasEditorTab}><MessageSquareCode size={IC} /></IconBtn>
+        <IconBtn label={`Fold All  ${sc("⌘K ⌘0", "Ctrl+K Ctrl+0")}`} onClick={handleFold} disabled={!hasEditorTab}><ChevronsDownUp size={IC} /></IconBtn>
+        <IconBtn label={`Unfold All  ${sc("⌘K ⌘J", "Ctrl+K Ctrl+J")}`} onClick={handleUnfold} disabled={!hasEditorTab}><ChevronsUpDown size={IC} /></IconBtn>
+        <IconBtn label={`Editor Commands  ${sc("⇧⌘P", "Ctrl+Shift+P")}`} onClick={handleEditorCommands} disabled={!hasEditorTab}><Command size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
       {/* ── Group 4: Search ── */}
       <div className="tb-group">
-        <IconBtn label={`Find  ${sc("⌘F", "Ctrl+F")}`} onClick={handleFind} disabled={!hasTab}><Search size={IC} /></IconBtn>
-        <IconBtn label={`Find & Replace  ${sc("⌥⌘F", "Ctrl+H")}`} onClick={handleReplace} disabled={!hasTab}><Replace size={IC} /></IconBtn>
+        <IconBtn label={`Find  ${sc("⌘F", "Ctrl+F")}`} onClick={handleFind} disabled={!hasEditorTab}><Search size={IC} /></IconBtn>
+        <IconBtn label={`Find & Replace  ${sc("⌥⌘F", "Ctrl+H")}`} onClick={handleReplace} disabled={!hasEditorTab}><Replace size={IC} /></IconBtn>
       </div>
 
       <Sep />
@@ -197,7 +178,7 @@ export default function ToolBar() {
       <div className="tb-group">
         <IconBtn label={`Word Wrap: ${state.wordWrap === "on" ? "On" : "Off"}  ${sc("⌥Z", "Alt+Z")}`} onClick={handleWordWrap} active={state.wordWrap === "on"}><WrapText size={IC} /></IconBtn>
         <IconBtn label={`Minimap: ${state.minimap ? "On" : "Off"}`} onClick={handleMinimap} active={state.minimap}><Map size={IC} /></IconBtn>
-        <IconBtn label={`Diagnostics: ${state.diagnostics ? "On" : "Off"}`} onClick={() => { dispatch({ type: "SET_DIAGNOSTICS", diagnostics: !state.diagnostics }); saveSetting("diagnostics", !state.diagnostics); }} active={!state.diagnostics}><CircleSlash2 size={IC} /></IconBtn>
+        <IconBtn label={`Diagnostics: ${state.diagnostics ? "On" : "Off"}`} onClick={() => { dispatch({ type: "SET_DIAGNOSTICS", diagnostics: !state.diagnostics }); }} active={state.diagnostics}><CircleAlert size={IC} /></IconBtn>
         <IconBtn label={`Theme: ${state.theme}`} onClick={handleTheme}><Palette size={IC} /></IconBtn>
       </div>
 
@@ -214,32 +195,32 @@ export default function ToolBar() {
 
       {/* ── Group 7: Line Operations ── */}
       <div className="tb-group">
-        <IconBtn label={`Duplicate Line Down  ${sc("⇧⌥↓", "Shift+Alt+↓")}`} onClick={handleDuplicateDown} disabled={!hasTab}><CopyPlus size={IC} /></IconBtn>
-        <IconBtn label={`Delete Line  ${sc("⇧⌘K", "Ctrl+Shift+K")}`} onClick={handleDeleteLine} disabled={!hasTab}><Trash2 size={IC} /></IconBtn>
-        <IconBtn label={`Move Line Up  ${sc("⌥↑", "Alt+↑")}`} onClick={handleMoveLinesUp} disabled={!hasTab}><MoveUp size={IC} /></IconBtn>
-        <IconBtn label={`Move Line Down  ${sc("⌥↓", "Alt+↓")}`} onClick={handleMoveLinesDown} disabled={!hasTab}><MoveDown size={IC} /></IconBtn>
-        <IconBtn label="Join Lines" onClick={handleJoinLines} disabled={!hasTab}><Combine size={IC} /></IconBtn>
-        <IconBtn label="Sort Lines Ascending" onClick={handleSortAsc} disabled={!hasTab}><ArrowUpAZ size={IC} /></IconBtn>
-        <IconBtn label="Sort Lines Descending" onClick={handleSortDesc} disabled={!hasTab}><ArrowDownAZ size={IC} /></IconBtn>
+        <IconBtn label={`Duplicate Line Down  ${sc("⇧⌥↓", "Shift+Alt+↓")}`} onClick={handleDuplicateDown} disabled={!hasEditorTab}><CopyPlus size={IC} /></IconBtn>
+        <IconBtn label={`Delete Line  ${sc("⇧⌘K", "Ctrl+Shift+K")}`} onClick={handleDeleteLine} disabled={!hasEditorTab}><Trash2 size={IC} /></IconBtn>
+        <IconBtn label={`Move Line Up  ${sc("⌥↑", "Alt+↑")}`} onClick={handleMoveLinesUp} disabled={!hasEditorTab}><MoveUp size={IC} /></IconBtn>
+        <IconBtn label={`Move Line Down  ${sc("⌥↓", "Alt+↓")}`} onClick={handleMoveLinesDown} disabled={!hasEditorTab}><MoveDown size={IC} /></IconBtn>
+        <IconBtn label="Join Lines" onClick={handleJoinLines} disabled={!hasEditorTab}><Combine size={IC} /></IconBtn>
+        <IconBtn label="Sort Lines Ascending" onClick={handleSortAsc} disabled={!hasEditorTab}><ArrowUpAZ size={IC} /></IconBtn>
+        <IconBtn label="Sort Lines Descending" onClick={handleSortDesc} disabled={!hasEditorTab}><ArrowDownAZ size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
       {/* ── Group 8: Transform ── */}
       <div className="tb-group">
-        <IconBtn label="Transform to UPPERCASE" onClick={handleUpperCase} disabled={!hasTab}><CaseUpper size={IC} /></IconBtn>
-        <IconBtn label="Transform to lowercase" onClick={handleLowerCase} disabled={!hasTab}><CaseLower size={IC} /></IconBtn>
-        <IconBtn label="Transform to Title Case" onClick={handleTitleCase} disabled={!hasTab}><CaseSensitive size={IC} /></IconBtn>
+        <IconBtn label="Transform to UPPERCASE" onClick={handleUpperCase} disabled={!hasEditorTab}><CaseUpper size={IC} /></IconBtn>
+        <IconBtn label="Transform to lowercase" onClick={handleLowerCase} disabled={!hasEditorTab}><CaseLower size={IC} /></IconBtn>
+        <IconBtn label="Transform to Title Case" onClick={handleTitleCase} disabled={!hasEditorTab}><CaseSensitive size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
       {/* ── Group 9: Indent & Clean ── */}
       <div className="tb-group">
-        <IconBtn label={`Indent Lines  ${sc("⌘]", "Ctrl+]")}`} onClick={handleIndent} disabled={!hasTab}><Indent size={IC} /></IconBtn>
-        <IconBtn label={`Outdent Lines  ${sc("⌘[", "Ctrl+[")}`} onClick={handleOutdent} disabled={!hasTab}><Outdent size={IC} /></IconBtn>
-        <IconBtn label="Trim Trailing Whitespace" onClick={handleTrimWS} disabled={!hasTab}><Eraser size={IC} /></IconBtn>
-        <IconBtn label={`Select Line  ${sc("⌘L", "Ctrl+L")}`} onClick={handleSelectLine} disabled={!hasTab}><TextSelect size={IC} /></IconBtn>
+        <IconBtn label={`Indent Lines  ${sc("⌘]", "Ctrl+]")}`} onClick={handleIndent} disabled={!hasEditorTab}><Indent size={IC} /></IconBtn>
+        <IconBtn label={`Outdent Lines  ${sc("⌘[", "Ctrl+[")}`} onClick={handleOutdent} disabled={!hasEditorTab}><Outdent size={IC} /></IconBtn>
+        <IconBtn label="Trim Trailing Whitespace" onClick={handleTrimWS} disabled={!hasEditorTab}><Eraser size={IC} /></IconBtn>
+        <IconBtn label={`Select Line  ${sc("⌘L", "Ctrl+L")}`} onClick={handleSelectLine} disabled={!hasEditorTab}><TextSelect size={IC} /></IconBtn>
       </div>
 
       {/* ── Dirty indicator ─────── right-aligned ── */}

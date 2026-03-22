@@ -101,6 +101,7 @@ export interface EditorState {
   settings: EditorSettings;
   isSettingsOpen: boolean;
   diagnostics: boolean;
+  notifications: AppNotification[];
 }
 
 export type AppTheme = "vs-dark" | "vs" | "hc-black";
@@ -121,11 +122,21 @@ export type EditorAction =
   | { type: "SET_RECENT_FILES"; recentFiles: string[] }
   | { type: "ADD_RECENT_FILE"; filePath: string }
   | { type: "SET_LANGUAGE"; tabId: string; language: string }
+  | {
+      type: "UPDATE_TAB_FILE_INFO";
+      tabId: string;
+      filePath: string;
+      fileName: string;
+      language: string;
+      modelUri: string;
+    }
   | { type: "LOAD_SETTINGS"; settings: EditorSettings }
   | { type: "UPDATE_SETTING"; key: keyof EditorSettings; value: EditorSettings[keyof EditorSettings] }
   | { type: "OPEN_SETTINGS" }
   | { type: "CLOSE_SETTINGS" }
-  | { type: "SET_DIAGNOSTICS"; diagnostics: boolean };
+  | { type: "SET_DIAGNOSTICS"; diagnostics: boolean }
+  | { type: "SHOW_NOTIFICATION"; notification: AppNotification }
+  | { type: "CLEAR_NOTIFICATION"; id: number };
 
 export interface EditorContextType {
   state: EditorState;
@@ -140,6 +151,12 @@ export interface StatusInfo {
   encoding: string;
   eol: string;
   indentation: string;
+}
+
+export interface AppNotification {
+  id: number;
+  kind: "info" | "warning" | "error";
+  message: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

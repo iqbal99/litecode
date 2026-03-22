@@ -1,11 +1,15 @@
-import { open, save, ask } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { open, save, message } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile, exists } from "@tauri-apps/plugin-fs";
 import * as monaco from "monaco-editor";
 import type { Tab, EditorAction } from "../types";
 import { persistRecentFile } from "../store/recentFiles";
+import { showNotification } from "./notifications";
+import { suppressPath, unsuppressPath } from "./fileWatcher";
 
 let untitledCounter = 0;
 const inFlightUris = new Set<string>();
+
+type DirtyCloseAction = "save" | "discard" | "cancel";
 
 /**
  * Detect Monaco language ID from file extension.
@@ -69,7 +73,41 @@ function detectLanguage(filePath: string): string {
  * Get file name from a file path.
  */
 function getFileName(filePath: string): string {
-  return filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
+  return filePath.split(/[\\/]/).pop() ?? filePath;
+}
+
+function createTab(
+  id: string,
+  filePath: string | null,
+  fileName: string,
+  language: string,
+  modelUri: string
+): Tab {
+  return {
+    id,
+    filePath,
+    fileName,
+    isDirty: false,
+    language,
+    modelUri,
+    cursorPosition: { lineNumber: 1, column: 1 },
+    scrollPosition: { scrollTop: 0, scrollLeft: 0 },
+  };
+}
+
+async function promptDirtyTabAction(tab: Tab): Promise<DirtyCloseAction> {
+  const result = await message(
+    `Do you want to save changes to ${tab.fileName}?`,
+    {
+      title: "Unsaved Changes",
+      kind: "warning",
+      buttons: "YesNoCancel",
+    }
+  );
+
+  if (result === "Yes") return "save";
+  if (result === "No") return "discard";
+  return "cancel";
 }
 
 /**
@@ -84,18 +122,7 @@ export function newFile(dispatch: React.Dispatch<EditorAction>): void {
   // Create Monaco model
   monaco.editor.createModel("", "plaintext", uri);
 
-  const tab: Tab = {
-    id,
-    filePath: null,
-    fileName,
-    isDirty: false,
-    language: "plaintext",
-    modelUri: uri.toString(),
-    cursorPosition: { lineNumber: 1, column: 1 },
-    scrollPosition: { scrollTop: 0, scrollLeft: 0 },
-  };
-
-  dispatch({ type: "OPEN_TAB", tab });
+  dispatch({ type: "OPEN_TAB", tab: createTab(id, null, fileName, "plaintext", uri.toString()) });
 }
 
 /**
@@ -137,7 +164,7 @@ export async function openFile(
 export async function openFilePath(
   filePath: string,
   dispatch: React.Dispatch<EditorAction>
-): Promise<void> {
+): Promise<boolean> {
   try {
     const content = await readTextFile(filePath);
     const language = detectLanguage(filePath);
@@ -149,15 +176,18 @@ export async function openFilePath(
     const uriStr = uri.toString();
 
     // Prevent duplicate model creation from rapid parallel calls
-    if (inFlightUris.has(uriStr)) return;
+    if (inFlightUris.has(uriStr)) {
+      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
+      return true;
+    }
 
     // Check if model for this URI already exists (file already open)
     const existingModel = monaco.editor.getModel(uri);
     if (existingModel) {
       // File is already open — just switch to that tab via OPEN_TAB
       // (reducer detects duplicate by filePath and activates existing tab)
-      dispatch({ type: "OPEN_TAB", tab: { id, filePath, fileName, isDirty: false, language, modelUri: uriStr, cursorPosition: { lineNumber: 1, column: 1 }, scrollPosition: { scrollTop: 0, scrollLeft: 0 } } });
-      return;
+      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
+      return true;
     }
 
     inFlightUris.add(uriStr);
@@ -165,25 +195,24 @@ export async function openFilePath(
       // Create Monaco model
       monaco.editor.createModel(content, language, uri);
 
-      const tab: Tab = {
-        id,
-        filePath,
-        fileName,
-        isDirty: false,
-        language,
-        modelUri: uriStr,
-        cursorPosition: { lineNumber: 1, column: 1 },
-        scrollPosition: { scrollTop: 0, scrollLeft: 0 },
-      };
-
-      dispatch({ type: "OPEN_TAB", tab });
+      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
       dispatch({ type: "ADD_RECENT_FILE", filePath });
       persistRecentFile(filePath); // persist to disk (fire-and-forget)
     } finally {
       inFlightUris.delete(uriStr);
     }
+    return true;
   } catch (err) {
     console.error("Failed to open file:", err);
+    const missing = !(await exists(filePath).catch(() => true));
+    showNotification(
+      dispatch,
+      "error",
+      missing
+        ? `LiteCode could not find "${getFileName(filePath)}".`
+        : `LiteCode could not open "${getFileName(filePath)}".`
+    );
+    return false;
   }
 }
 
@@ -204,11 +233,17 @@ export async function saveFile(
     if (!model) return false;
 
     const content = model.getValue();
-    await writeTextFile(tab.filePath, content);
+    suppressPath(tab.filePath);
+    try {
+      await writeTextFile(tab.filePath, content);
+    } finally {
+      setTimeout(() => unsuppressPath(tab.filePath!), 1500);
+    }
     dispatch({ type: "MARK_CLEAN", tabId: tab.id });
     return true;
   } catch (err) {
     console.error("Failed to save file:", err);
+    showNotification(dispatch, "error", `LiteCode could not save "${tab.fileName}".`);
     return false;
   }
 }
@@ -232,24 +267,56 @@ export async function saveFileAs(
     const model = monaco.editor.getModel(uri);
     if (!model) return false;
 
-    const content = model.getValue();
-    await writeTextFile(filePath, content);
-
     const fileName = getFileName(filePath);
     const language = detectLanguage(filePath);
+    const fileUri = monaco.Uri.file(filePath);
+    const fileUriStr = fileUri.toString();
+    const existingModel = monaco.editor.getModel(fileUri);
 
-    dispatch({ type: "UPDATE_TAB_PATH", tabId: tab.id, filePath, fileName });
-    dispatch({ type: "SET_LANGUAGE", tabId: tab.id, language });
+    if (existingModel && existingModel.uri.toString() !== tab.modelUri) {
+      await message(
+        `"${fileName}" is already open in another tab. Close that tab or save to a different path.`,
+        { title: "Save As Blocked", kind: "warning" }
+      );
+      return false;
+    }
+
+    const content = model.getValue();
+    suppressPath(filePath);
+    try {
+      await writeTextFile(filePath, content);
+    } finally {
+      setTimeout(() => unsuppressPath(filePath), 1500);
+    }
+
+    if (tab.modelUri !== fileUriStr) {
+      const nextModel = monaco.editor.createModel(content, language, fileUri);
+      nextModel.updateOptions({
+        tabSize: model.getOptions().tabSize,
+        insertSpaces: model.getOptions().insertSpaces,
+      });
+      dispatch({
+        type: "UPDATE_TAB_FILE_INFO",
+        tabId: tab.id,
+        filePath,
+        fileName,
+        language,
+        modelUri: fileUriStr,
+      });
+    } else {
+      dispatch({ type: "UPDATE_TAB_PATH", tabId: tab.id, filePath, fileName });
+      dispatch({ type: "SET_LANGUAGE", tabId: tab.id, language });
+      monaco.editor.setModelLanguage(model, language);
+    }
+
     dispatch({ type: "MARK_CLEAN", tabId: tab.id });
     dispatch({ type: "ADD_RECENT_FILE", filePath });
     persistRecentFile(filePath); // persist to disk (fire-and-forget)
 
-    // Update model language
-    monaco.editor.setModelLanguage(model, language);
-
     return true;
   } catch (err) {
     console.error("Failed to save file:", err);
+    showNotification(dispatch, "error", `LiteCode could not save "${tab.fileName}" to disk.`);
     return false;
   }
 }
@@ -262,17 +329,10 @@ export async function closeTab(
   dispatch: React.Dispatch<EditorAction>
 ): Promise<boolean> {
   if (tab.isDirty) {
-    const shouldSave = await ask(
-      `Do you want to save changes to ${tab.fileName}?`,
-      {
-        title: "Unsaved Changes",
-        kind: "warning",
-        okLabel: "Save",
-        cancelLabel: "Don't Save",
-      }
-    );
+    const action = await promptDirtyTabAction(tab);
+    if (action === "cancel") return false;
 
-    if (shouldSave) {
+    if (action === "save") {
       const saved = await saveFile(tab, dispatch);
       if (!saved) return false; // User cancelled save dialog
     }

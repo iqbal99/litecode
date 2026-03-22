@@ -14,6 +14,7 @@ export interface PersistedSettings extends EditorSettings {
   fontSize: number;
   wordWrap: "off" | "on";
   minimap: boolean;
+  diagnostics: boolean;
 }
 
 export const DEFAULT_PERSISTED_SETTINGS: PersistedSettings = {
@@ -22,6 +23,7 @@ export const DEFAULT_PERSISTED_SETTINGS: PersistedSettings = {
   fontSize: 14,
   wordWrap: "off",
   minimap: true,
+  diagnostics: true,
 };
 
 const SETTINGS_DIR = ".litecode";
@@ -33,8 +35,11 @@ const BASE = BaseDirectory.Home;
 async function ensureSettingsDir(): Promise<void> {
   try {
     await mkdir(SETTINGS_DIR, { baseDir: BASE, recursive: true });
-  } catch {
-    // Directory already exists — safe to ignore
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("already exist") && !msg.includes("EEXIST")) {
+      console.error("[settingsService] Failed to create settings directory:", msg);
+    }
   }
 }
 
@@ -73,9 +78,9 @@ export async function saveSettings(settings: PersistedSettings): Promise<void> {
 
 // ─── Save a single setting key (read-modify-write) ──────────────────────────
 
-export async function saveSetting(
-  key: string,
-  value: unknown
+export async function saveSetting<K extends keyof PersistedSettings>(
+  key: K,
+  value: PersistedSettings[K]
 ): Promise<void> {
   try {
     const current = await loadSettings();
