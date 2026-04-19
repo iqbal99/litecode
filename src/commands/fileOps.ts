@@ -1,19 +1,28 @@
 import { open, save, message } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile, exists } from "@tauri-apps/plugin-fs";
 import * as monaco from "monaco-editor";
-import type { Tab, EditorAction } from "../types";
+import type { Tab } from "../types";
+import type { AppDispatch } from "../store/store";
+import {
+  openTab,
+  setActiveTab,
+  addRecentFile,
+  markClean,
+  updateTabFileInfo,
+  updateTabPath,
+  setLanguage,
+  closeTab as closeTabAction,
+} from "../store/editorSlice";
+import { store } from "../store/store";
 import { persistRecentFile } from "../store/recentFiles";
 import { showNotification } from "./notifications";
-import { suppressPath, unsuppressPath } from "./fileWatcher";
+import { watchFile, unwatchFile } from "./fileWatcher";
 
 let untitledCounter = 0;
-const inFlightUris = new Set<string>();
+const inFlightOpens = new Map<string, Promise<boolean>>();
 
 type DirtyCloseAction = "save" | "discard" | "cancel";
 
-/**
- * Detect Monaco language ID from file extension.
- */
 function detectLanguage(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
@@ -69,9 +78,6 @@ function detectLanguage(filePath: string): string {
   return map[ext] || "plaintext";
 }
 
-/**
- * Get file name from a file path.
- */
 function getFileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath;
 }
@@ -110,27 +116,18 @@ async function promptDirtyTabAction(tab: Tab): Promise<DirtyCloseAction> {
   return "cancel";
 }
 
-/**
- * Create a new untitled tab.
- */
-export function newFile(dispatch: React.Dispatch<EditorAction>): void {
+export function newFile(dispatch: AppDispatch): void {
   untitledCounter++;
   const id = `untitled-${untitledCounter}-${Date.now()}`;
   const fileName = `Untitled-${untitledCounter}`;
   const uri = monaco.Uri.parse(`inmemory://model/${id}`);
 
-  // Create Monaco model
   monaco.editor.createModel("", "plaintext", uri);
 
-  dispatch({ type: "OPEN_TAB", tab: createTab(id, null, fileName, "plaintext", uri.toString()) });
+  dispatch(openTab(createTab(id, null, fileName, "plaintext", uri.toString())));
 }
 
-/**
- * Open a file dialog and open the selected file(s).
- */
-export async function openFile(
-  dispatch: React.Dispatch<EditorAction>
-): Promise<void> {
+export async function openFile(dispatch: AppDispatch): Promise<void> {
   const result = await open({
     multiple: true,
     directory: false,
@@ -158,70 +155,103 @@ export async function openFile(
   }
 }
 
-/**
- * Open a file by its path.
- */
+function focusExistingTabForPath(
+  filePath: string,
+  dispatch: AppDispatch
+): boolean {
+  const existing = store
+    .getState()
+    .editor.tabs.find((t) => t.filePath === filePath && !t.isSettings);
+  if (existing) {
+    dispatch(setActiveTab(existing.id));
+    return true;
+  }
+  return false;
+}
+
 export async function openFilePath(
   filePath: string,
-  dispatch: React.Dispatch<EditorAction>
+  dispatch: AppDispatch
 ): Promise<boolean> {
-  try {
-    const content = await readTextFile(filePath);
-    const language = detectLanguage(filePath);
-    const fileName = getFileName(filePath);
-    const id = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    // Use file:// URI so Monaco's TypeScript/language workers reliably identify
-    // the file type from the extension (e.g. file:///Users/x/foo.tsx → typescript)
-    const uri = monaco.Uri.file(filePath);
-    const uriStr = uri.toString();
+  const language = detectLanguage(filePath);
+  const fileName = getFileName(filePath);
+  const id = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const uri = monaco.Uri.file(filePath);
+  const uriStr = uri.toString();
 
-    // Prevent duplicate model creation from rapid parallel calls
-    if (inFlightUris.has(uriStr)) {
-      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
-      return true;
-    }
-
-    // Check if model for this URI already exists (file already open)
-    const existingModel = monaco.editor.getModel(uri);
-    if (existingModel) {
-      // File is already open — just switch to that tab via OPEN_TAB
-      // (reducer detects duplicate by filePath and activates existing tab)
-      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
-      return true;
-    }
-
-    inFlightUris.add(uriStr);
-    try {
-      // Create Monaco model
-      monaco.editor.createModel(content, language, uri);
-
-      dispatch({ type: "OPEN_TAB", tab: createTab(id, filePath, fileName, language, uriStr) });
-      dispatch({ type: "ADD_RECENT_FILE", filePath });
-      persistRecentFile(filePath); // persist to disk (fire-and-forget)
-    } finally {
-      inFlightUris.delete(uriStr);
-    }
+  // Focus an existing tab first (matches by filePath, avoids creating a stale id).
+  if (focusExistingTabForPath(filePath, dispatch)) {
     return true;
-  } catch (err) {
-    console.error("Failed to open file:", err);
-    const missing = !(await exists(filePath).catch(() => true));
-    showNotification(
-      dispatch,
-      "error",
-      missing
-        ? `LiteCode could not find "${getFileName(filePath)}".`
-        : `LiteCode could not open "${getFileName(filePath)}".`
-    );
+  }
+
+  const pushNewTab = () => {
+    dispatch(openTab(createTab(id, filePath, fileName, language, uriStr)));
+  };
+
+  // Model already exists but no open tab owns it (e.g. stale after close race).
+  // Dispose it so we do not hand a different tab a leftover model.
+  const stale = monaco.editor.getModel(uri);
+  if (stale) {
+    stale.dispose();
+  }
+
+  const pending = inFlightOpens.get(uriStr);
+  if (pending) {
+    const ok = await pending;
+    if (!ok) return false;
+    if (focusExistingTabForPath(filePath, dispatch)) return true;
+    // The original opener failed to leave a tab; model may exist — reuse it.
+    if (monaco.editor.getModel(uri)) {
+      pushNewTab();
+      return true;
+    }
     return false;
+  }
+
+  const openPromise = (async (): Promise<boolean> => {
+    try {
+      const content = await readTextFile(filePath);
+      // Another opener may have raced us; only create the model once.
+      if (!monaco.editor.getModel(uri)) {
+        monaco.editor.createModel(content, language, uri);
+      }
+
+      pushNewTab();
+      dispatch(addRecentFile(filePath));
+      persistRecentFile(filePath);
+      return true;
+    } catch (err) {
+      console.error("Failed to open file:", err);
+      let missing = false;
+      try {
+        missing = !(await exists(filePath));
+      } catch {
+        missing = false;
+      }
+      showNotification(
+        dispatch,
+        "error",
+        missing
+          ? `LiteCode could not find "${getFileName(filePath)}".`
+          : `LiteCode could not open "${getFileName(filePath)}".`
+      );
+      return false;
+    }
+  })();
+
+  inFlightOpens.set(uriStr, openPromise);
+  try {
+    return await openPromise;
+  } finally {
+    if (inFlightOpens.get(uriStr) === openPromise) {
+      inFlightOpens.delete(uriStr);
+    }
   }
 }
 
-/**
- * Save the current tab's content to its file path.
- */
 export async function saveFile(
   tab: Tab,
-  dispatch: React.Dispatch<EditorAction>
+  dispatch: AppDispatch
 ): Promise<boolean> {
   if (!tab.filePath) {
     return saveFileAs(tab, dispatch);
@@ -230,16 +260,28 @@ export async function saveFile(
   try {
     const uri = monaco.Uri.parse(tab.modelUri);
     const model = monaco.editor.getModel(uri);
-    if (!model) return false;
+    if (!model) {
+      showNotification(dispatch, "error", `LiteCode could not find an editor model for "${tab.fileName}".`);
+      return false;
+    }
 
     const content = model.getValue();
-    suppressPath(tab.filePath);
+    const savePath = tab.filePath;
+
+    // Unwatch before saving to prevent self-triggered reload prompts.
+    unwatchFile(savePath);
+
     try {
-      await writeTextFile(tab.filePath, content);
+      await writeTextFile(savePath, content);
     } finally {
-      setTimeout(() => unsuppressPath(tab.filePath!), 1500);
+      // Re-establish the watcher after the save completes.
+      watchFile(
+        tab,
+        () => store.getState().editor.tabs.find((t) => t.id === tab.id),
+        dispatch
+      );
     }
-    dispatch({ type: "MARK_CLEAN", tabId: tab.id });
+    dispatch(markClean(tab.id));
     return true;
   } catch (err) {
     console.error("Failed to save file:", err);
@@ -248,12 +290,9 @@ export async function saveFile(
   }
 }
 
-/**
- * Save the current tab with a new file path (Save As).
- */
 export async function saveFileAs(
   tab: Tab,
-  dispatch: React.Dispatch<EditorAction>
+  dispatch: AppDispatch
 ): Promise<boolean> {
   const filePath = await save({
     defaultPath: tab.filePath ?? tab.fileName,
@@ -265,7 +304,10 @@ export async function saveFileAs(
   try {
     const uri = monaco.Uri.parse(tab.modelUri);
     const model = monaco.editor.getModel(uri);
-    if (!model) return false;
+    if (!model) {
+      showNotification(dispatch, "error", `LiteCode could not find an editor model for "${tab.fileName}".`);
+      return false;
+    }
 
     const fileName = getFileName(filePath);
     const language = detectLanguage(filePath);
@@ -274,44 +316,64 @@ export async function saveFileAs(
     const existingModel = monaco.editor.getModel(fileUri);
 
     if (existingModel && existingModel.uri.toString() !== tab.modelUri) {
-      await message(
-        `"${fileName}" is already open in another tab. Close that tab or save to a different path.`,
-        { title: "Save As Blocked", kind: "warning" }
-      );
-      return false;
+      const ownedByOtherTab = store
+        .getState()
+        .editor.tabs.some((t) => t.id !== tab.id && t.modelUri === fileUriStr);
+      if (ownedByOtherTab) {
+        await message(
+          `"${fileName}" is already open in another tab. Close that tab or save to a different path.`,
+          { title: "Save As Blocked", kind: "warning" }
+        );
+        return false;
+      }
+      // Stale model with no owning tab — drop it.
+      existingModel.dispose();
     }
 
     const content = model.getValue();
-    suppressPath(filePath);
+
+    // Unwatch before saving to prevent self-triggered reload prompts.
+    unwatchFile(filePath);
+
     try {
       await writeTextFile(filePath, content);
     } finally {
-      setTimeout(() => unsuppressPath(filePath), 1500);
+      // If the path didn't change, we must manually re-watch because the
+      // Editor.tsx useEffect won't trigger for the same path.
+      if (filePath === tab.filePath) {
+        watchFile(
+          tab,
+          () => store.getState().editor.tabs.find((t) => t.id === tab.id),
+          dispatch
+        );
+      }
     }
 
     if (tab.modelUri !== fileUriStr) {
+      const prevOptions = model.getOptions();
       const nextModel = monaco.editor.createModel(content, language, fileUri);
       nextModel.updateOptions({
-        tabSize: model.getOptions().tabSize,
-        insertSpaces: model.getOptions().insertSpaces,
+        tabSize: prevOptions.tabSize,
+        insertSpaces: prevOptions.insertSpaces,
       });
-      dispatch({
-        type: "UPDATE_TAB_FILE_INFO",
+      dispatch(updateTabFileInfo({
         tabId: tab.id,
         filePath,
         fileName,
         language,
         modelUri: fileUriStr,
-      });
+      }));
+      // Dispose the old (typically `inmemory://`) model now that state points at the new one.
+      model.dispose();
     } else {
-      dispatch({ type: "UPDATE_TAB_PATH", tabId: tab.id, filePath, fileName });
-      dispatch({ type: "SET_LANGUAGE", tabId: tab.id, language });
+      dispatch(updateTabPath({ tabId: tab.id, filePath, fileName }));
+      dispatch(setLanguage({ tabId: tab.id, language }));
       monaco.editor.setModelLanguage(model, language);
     }
 
-    dispatch({ type: "MARK_CLEAN", tabId: tab.id });
-    dispatch({ type: "ADD_RECENT_FILE", filePath });
-    persistRecentFile(filePath); // persist to disk (fire-and-forget)
+    dispatch(markClean(tab.id));
+    dispatch(addRecentFile(filePath));
+    persistRecentFile(filePath);
 
     return true;
   } catch (err) {
@@ -321,12 +383,9 @@ export async function saveFileAs(
   }
 }
 
-/**
- * Close a tab, prompting to save if dirty.
- */
 export async function closeTab(
   tab: Tab,
-  dispatch: React.Dispatch<EditorAction>
+  dispatch: AppDispatch
 ): Promise<boolean> {
   if (tab.isDirty) {
     const action = await promptDirtyTabAction(tab);
@@ -334,15 +393,14 @@ export async function closeTab(
 
     if (action === "save") {
       const saved = await saveFile(tab, dispatch);
-      if (!saved) return false; // User cancelled save dialog
+      if (!saved) return false;
     }
   }
 
-  // Dispose Monaco model
   const uri = monaco.Uri.parse(tab.modelUri);
   const model = monaco.editor.getModel(uri);
   model?.dispose();
 
-  dispatch({ type: "CLOSE_TAB", tabId: tab.id });
+  dispatch(closeTabAction(tab.id));
   return true;
 }

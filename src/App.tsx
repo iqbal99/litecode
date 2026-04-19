@@ -3,7 +3,22 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
-import { useEditor } from "./store/editorStore";
+import { useAppSelector, useAppDispatch } from "./store/hooks";
+import { getEditorRef } from "./store/editorRef";
+import { store } from "./store/store";
+import {
+  clearNotification,
+  setTheme,
+  setFontSize,
+  setWordWrap,
+  setMinimap,
+  setDiagnostics,
+  loadSettings as loadSettingsAction,
+  setRecentFiles,
+  closeSettings,
+  openSettings,
+  setActiveTab,
+} from "./store/editorSlice";
 import {
   newFile,
   openFile,
@@ -24,9 +39,19 @@ import ToolBar from "./components/ToolBar";
 import Settings from "./components/Settings";
 import NotificationCenter from "./components/NotificationCenter";
 import { showNotification } from "./commands/notifications";
+import { resolveUnsavedBeforeExit } from "./commands/appClose";
 
 function App() {
-  const { state, dispatch, editorRef } = useEditor();
+  const dispatch = useAppDispatch();
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const notifications = useAppSelector((s) => s.editor.notifications);
+  const theme = useAppSelector((s) => s.editor.theme);
+  const fontSize = useAppSelector((s) => s.editor.fontSize);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const diagnosticsEnabled = useAppSelector((s) => s.editor.diagnostics);
+  const editorSettings = useAppSelector((s) => s.editor.settings);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [palettePrefill, setPalettePrefill] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -36,38 +61,52 @@ function App() {
     setPaletteOpen(true);
   }, []);
 
-  const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
-
-  // Refs for stable event handlers that need latest state
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const activeTabRef = useRef(activeTab);
-  activeTabRef.current = activeTab;
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
   const settingsLoaded = useRef(false);
+  const allowNativeCloseRef = useRef(false);
+  const closeInProgressRef = useRef(false);
 
   const dismissedRef = useRef(new Set<number>());
+  const notificationTimeoutsRef = useRef(new Map<number, number>());
   useEffect(() => {
-    const timeouts: number[] = [];
-    for (const n of state.notifications) {
-      if (dismissedRef.current.has(n.id)) continue;
+    for (const n of notifications) {
+      if (dismissedRef.current.has(n.id) || notificationTimeoutsRef.current.has(n.id)) {
+        continue;
+      }
       dismissedRef.current.add(n.id);
-      timeouts.push(
-        window.setTimeout(() => {
-          dispatch({ type: "CLEAR_NOTIFICATION", id: n.id });
-          dismissedRef.current.delete(n.id);
-        }, 4200)
-      );
+      const timeout = window.setTimeout(() => {
+        notificationTimeoutsRef.current.delete(n.id);
+        dismissedRef.current.delete(n.id);
+        dispatch(clearNotification(n.id));
+      }, 4200);
+      notificationTimeoutsRef.current.set(n.id, timeout);
     }
-    return () => timeouts.forEach((t) => window.clearTimeout(t));
-  }, [state.notifications, dispatch]);
 
-  // Load persisted settings + recent files on mount
+    const activeIds = new Set(notifications.map((n) => n.id));
+    for (const [id, timeout] of notificationTimeoutsRef.current) {
+      if (!activeIds.has(id)) {
+        window.clearTimeout(timeout);
+        notificationTimeoutsRef.current.delete(id);
+        dismissedRef.current.delete(id);
+      }
+    }
+  }, [notifications, dispatch]);
+
+  useEffect(() => {
+    return () => {
+      for (const timeout of notificationTimeoutsRef.current.values()) {
+        window.clearTimeout(timeout);
+      }
+      notificationTimeoutsRef.current.clear();
+      dismissedRef.current.clear();
+    };
+  }, []);
+
   useEffect(() => {
     (async () => {
       const persisted = await loadSettings();
 
-      // Auto-detect best monospace font if still on generic default
       if (!persisted.fontFamily || persisted.fontFamily === "monospace") {
         const preferred = ["Consolas", "Cascadia Mono", "Menlo", "SF Mono", "Monaco"];
         const canvas = document.createElement("canvas");
@@ -85,49 +124,45 @@ function App() {
         }
       }
 
-      // Legacy fields
-      dispatch({ type: "SET_THEME", theme: persisted.theme });
-      dispatch({ type: "SET_FONT_SIZE", fontSize: persisted.fontSize });
-      dispatch({ type: "SET_WORD_WRAP", wordWrap: persisted.wordWrap });
-      dispatch({ type: "SET_MINIMAP", minimap: persisted.minimap });
-      dispatch({ type: "SET_DIAGNOSTICS", diagnostics: persisted.diagnostics });
-      // Additional EditorSettings
+      dispatch(setTheme(persisted.theme));
+      dispatch(setFontSize(persisted.fontSize));
+      dispatch(setWordWrap(persisted.wordWrap));
+      dispatch(setMinimap(persisted.minimap));
+      dispatch(setDiagnostics(persisted.diagnostics));
+
       const {
         theme: _t,
         fontSize: _fs,
         wordWrap: _ww,
         minimap: _mm,
         diagnostics: _diag,
-        ...editorSettings
+        ...rest
       } = persisted;
-      dispatch({ type: "LOAD_SETTINGS", settings: editorSettings });
+      dispatch(loadSettingsAction(rest));
       settingsLoaded.current = true;
       const recent = await loadRecentFiles();
-      dispatch({ type: "SET_RECENT_FILES", recentFiles: recent });
+      dispatch(setRecentFiles(recent));
     })();
   }, [dispatch]);
 
-  // Auto-save all settings whenever they change (after initial load)
   useEffect(() => {
     if (!settingsLoaded.current) return;
     saveSettings({
-      ...state.settings,
-      theme: state.theme,
-      fontSize: state.fontSize,
-      wordWrap: state.wordWrap,
-      minimap: state.minimap,
-      diagnostics: state.diagnostics,
+      ...editorSettings,
+      theme,
+      fontSize,
+      wordWrap,
+      minimap: minimapEnabled,
+      diagnostics: diagnosticsEnabled,
     });
-  }, [state.theme, state.fontSize, state.wordWrap, state.minimap, state.diagnostics, state.settings]);
+  }, [theme, fontSize, wordWrap, minimapEnabled, diagnosticsEnabled, editorSettings]);
 
-  // Sync native window theme with app theme (affects window borders/chrome on Windows)
   useEffect(() => {
     const appWindow = getCurrentWindow();
-    const nativeTheme = state.theme === "vs" ? "light" as const : "dark" as const;
+    const nativeTheme = theme === "vs" ? "light" as const : "dark" as const;
     appWindow.setTheme(nativeTheme).catch(console.error);
-  }, [state.theme]);
+  }, [theme]);
 
-  // Update window title
   useEffect(() => {
     const appWindow = getCurrentWindow();
     if (activeTab && !activeTab.isSettings) {
@@ -141,11 +176,10 @@ function App() {
     }
   }, [activeTab?.fileName, activeTab?.filePath, activeTab?.isDirty, activeTab?.isSettings]);
 
-  // Keyboard shortcuts — stable handler using refs to avoid listener churn
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      const s = stateRef.current;
-      const at = activeTabRef.current;
+      const s = store.getState().editor;
+      const at = s.tabs.find((t) => t.id === s.activeTabId) ?? null;
       const mod = e.metaKey || e.ctrlKey;
 
       if (mod && e.key === "n") {
@@ -156,13 +190,17 @@ function App() {
         openFile(dispatch);
       } else if (mod && e.shiftKey && e.key === "s") {
         e.preventDefault();
-        if (at && !at.isSettings) saveFileAs(at, dispatch);
+        if (at && !at.isSettings) {
+          void saveFileAs(at, dispatch);
+        }
       } else if (mod && e.key === "s") {
         e.preventDefault();
         if (at && !at.isSettings) {
-          at.filePath
-            ? saveFile(at, dispatch)
-            : saveFileAs(at, dispatch);
+          if (at.filePath) {
+            void saveFile(at, dispatch);
+          } else {
+            void saveFileAs(at, dispatch);
+          }
         }
       } else if (mod && e.key === "w") {
         e.preventDefault();
@@ -170,50 +208,43 @@ function App() {
           const tab = s.tabs.find((t) => t.id === s.activeTabId);
           if (tab) {
             if (tab.isSettings) {
-              dispatch({ type: "CLOSE_SETTINGS" });
+              dispatch(closeSettings());
             } else {
-              closeTab(tab, dispatch);
+              void closeTab(tab, dispatch);
             }
           }
         }
       } else if (mod && e.shiftKey && e.key === "p") {
-        // ⇧⌘P → Monaco's own command palette (editor actions)
         e.preventDefault();
-        editorRef.current?.trigger("", "editor.action.quickCommand", null);
+        getEditorRef()?.trigger("", "editor.action.quickCommand", null);
       } else if (mod && e.key === "p") {
-        // ⌘P → custom file/app palette (centered)
         e.preventDefault();
         openPalette("");
       } else if (e.ctrlKey && !e.metaKey && e.key === "g") {
-        // ⌃G → Monaco's built-in go-to-line dialog
         e.preventDefault();
-        editorRef.current?.getAction("editor.action.gotoLine")?.run();
+        getEditorRef()?.getAction("editor.action.gotoLine")?.run();
       } else if (mod && e.key === "=") {
         e.preventDefault();
-        const next = Math.min(s.fontSize + 1, 72);
-        dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+        dispatch(setFontSize(Math.min(s.fontSize + 1, 72)));
       } else if (mod && e.key === "-") {
         e.preventDefault();
-        const next = Math.max(s.fontSize - 1, 8);
-        dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+        dispatch(setFontSize(Math.max(s.fontSize - 1, 8)));
       } else if (mod && e.key === "0") {
         e.preventDefault();
-        dispatch({ type: "SET_FONT_SIZE", fontSize: 14 });
+        dispatch(setFontSize(14));
       } else if (mod && e.key === ",") {
         e.preventDefault();
-        dispatch({ type: s.isSettingsOpen ? "CLOSE_SETTINGS" : "OPEN_SETTINGS" });
+        dispatch(s.isSettingsOpen ? closeSettings() : openSettings());
       }
 
-      // Tab switching: Cmd+1..9
       if (mod && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const idx = parseInt(e.key) - 1;
         if (s.tabs[idx]) {
-          dispatch({ type: "SET_ACTIVE_TAB", tabId: s.tabs[idx].id });
+          dispatch(setActiveTab(s.tabs[idx].id));
         }
       }
 
-      // Ctrl+Tab / Ctrl+Shift+Tab: cycle through tabs
       if (e.ctrlKey && e.key === "Tab") {
         e.preventDefault();
         const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
@@ -221,11 +252,11 @@ function App() {
           const next = e.shiftKey
             ? (idx - 1 + s.tabs.length) % s.tabs.length
             : (idx + 1) % s.tabs.length;
-          dispatch({ type: "SET_ACTIVE_TAB", tabId: s.tabs[next].id });
+          dispatch(setActiveTab(s.tabs[next].id));
         }
       }
     },
-    [dispatch, openPalette, editorRef]
+    [dispatch, openPalette]
   );
 
   useEffect(() => {
@@ -233,7 +264,6 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  // Drag-and-drop files onto the window
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -252,8 +282,6 @@ function App() {
       e.stopPropagation();
       setDragOver(false);
 
-      // Tauri fires file drop events via the window
-      // For HTML5 drag-and-drop fallback
       const files = e.dataTransfer?.files;
       if (files) {
         for (let i = 0; i < files.length; i++) {
@@ -269,7 +297,6 @@ function App() {
     [dispatch]
   );
 
-  // Tauri v2 file drop events
   useEffect(() => {
     const appWindow = getCurrentWindow();
     let unlisten: (() => void) | undefined;
@@ -296,43 +323,112 @@ function App() {
     };
   }, [dispatch]);
 
-  // Handle file paths from CLI args (first launch) and single-instance forwarding
   useEffect(() => {
-    // 1. Retrieve files that were pending before the webview was ready
-    //    (CLI args on Windows/Linux, macOS Finder open events)
-    invoke<string[]>("take_pending_files")
-      .then((files) => {
-        for (const filePath of files) {
-          if (typeof filePath === "string" && filePath.length > 0) {
-            openFilePath(filePath, dispatch);
-          }
-        }
-      })
-      .catch(() => {
-        showNotification(dispatch, "error", "LiteCode could not restore files passed in on launch.");
-      });
-
-    // 2. Listen for files forwarded by single-instance plugin or macOS open events
     let unlisten: (() => void) | undefined;
-    listen<string[]>("open-files", (event) => {
-      for (const filePath of event.payload) {
+    let cancelled = false;
+
+    const openAll = (files: unknown) => {
+      if (!Array.isArray(files)) return;
+      for (const filePath of files) {
         if (typeof filePath === "string" && filePath.length > 0) {
           openFilePath(filePath, dispatch);
         }
       }
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    };
+
+    const drainPending = async () => {
+      try {
+        const files = await invoke<string[]>("take_pending_files");
+        if (!cancelled) openAll(files);
+      } catch {
+        if (!cancelled) {
+          showNotification(
+            dispatch,
+            "error",
+            "LiteCode could not restore files passed in on launch."
+          );
+        }
+      }
+    };
+
+    // Register the event listener BEFORE draining so an `Opened` event
+    // emitted concurrently with startup is not dropped. Then drain once
+    // the listener is attached to pick up anything that was queued while
+    // we were still setting up.
+    listen<string[]>("open-files", (event) => {
+      openAll(event.payload);
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+        void drainPending();
+      })
+      .catch(() => {
+        // Even if the listener failed to attach, try to surface anything queued.
+        void drainPending();
+      });
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, [dispatch]);
 
-  // Warn before closing with unsaved changes — stable via stateRef
+  const requestAppClose = useCallback(async (): Promise<boolean> => {
+    if (closeInProgressRef.current) {
+      return false;
+    }
+    closeInProgressRef.current = true;
+    const canClose = await resolveUnsavedBeforeExit(
+      () => store.getState().editor,
+      dispatch,
+      closeTab
+    );
+    if (!canClose) {
+      closeInProgressRef.current = false;
+      return false;
+    }
+
+    allowNativeCloseRef.current = true;
+    try {
+      await getCurrentWindow().close();
+      return true;
+    } catch (err) {
+      console.error("Failed to close app window:", err);
+      allowNativeCloseRef.current = false;
+      closeInProgressRef.current = false;
+      return false;
+    }
+  }, [dispatch]);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+
+    appWindow
+      .onCloseRequested(async (event) => {
+        if (allowNativeCloseRef.current) return;
+        event.preventDefault();
+        await requestAppClose();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error("Failed to install close-request handler:", err);
+      });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [requestAppClose]);
+
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (stateRef.current.tabs.some((t) => t.isDirty)) {
+      if (store.getState().editor.tabs.some((t) => t.isDirty)) {
         e.preventDefault();
       }
     };
@@ -340,27 +436,26 @@ function App() {
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
-  const hasOpenTabs = state.tabs.length > 0;
+  const hasOpenTabs = tabs.length > 0;
   const isSettingsActive = activeTab?.isSettings === true;
-  const hasRealTabs = state.tabs.some((t) => !t.isSettings);
+  const hasRealTabs = tabs.some((t) => !t.isSettings);
 
   return (
     <div
       className={`app ${dragOver ? "drag-over" : ""}`}
-      data-theme={state.theme}
+      data-theme={theme}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <NotificationCenter />
-      <TitleBar onOpenPalette={() => openPalette("")} />
+      <TitleBar onOpenPalette={() => openPalette("")} onRequestClose={requestAppClose} />
       <ToolBar />
       {hasOpenTabs && <TabBar />}
       <div className="editor-area">
         {isSettingsActive && <Settings />}
-        {/* Keep Editor in the DOM when real tabs exist so Monaco never unmounts */}
         <div className={`editor-slot${isSettingsActive ? " editor-slot--hidden" : ""}`}>
-          {hasRealTabs ? <Editor /> : <Welcome />}
+          {hasRealTabs ? <Editor /> : isSettingsActive ? null : <Welcome />}
         </div>
       </div>
       <StatusBar />

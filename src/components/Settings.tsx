@@ -1,15 +1,23 @@
 import { useRef, useState, useEffect } from "react";
 import { RotateCcw } from "lucide-react";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import {
+  setTheme,
+  setFontSize,
+  setWordWrap,
+  setMinimap,
+  setDiagnostics,
+  loadSettings as loadSettingsAction,
+  updateSetting,
+} from "../store/editorSlice";
 import {
   saveSettings,
   DEFAULT_PERSISTED_SETTINGS,
 } from "../commands/settingsService";
+import { showNotification } from "../commands/notifications";
 import type { EditorSettings, AppTheme } from "../types";
 import { DEFAULT_EDITOR_SETTINGS } from "../types";
 import "./Settings.css";
-
-// ─── Category ids for nav scroll ─────────────────────────────────────────────
 
 const CATEGORIES = [
   { id: "appearance",   label: "Appearance" },
@@ -21,8 +29,6 @@ const CATEGORIES = [
   { id: "guides",       label: "Guides & Brackets" },
   { id: "suggestions",  label: "Suggestions" },
 ];
-
-// ─── Font detection ──────────────────────────────────────────────────────────
 
 const CANDIDATE_FONTS = [
   "Consolas",
@@ -61,8 +67,6 @@ function detectAvailableFonts(): string[] {
   return available;
 }
 
-// ─── Small reusable row ───────────────────────────────────────────────────────
-
 interface RowProps {
   label: string;
   description?: string;
@@ -92,78 +96,88 @@ function SectionHeader({ id, title, hidden }: { id: string; title: string; hidde
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 export default function Settings() {
-  const { state, dispatch } = useEditor();
+  const theme = useAppSelector((s) => s.editor.theme);
+  const fontSize = useAppSelector((s) => s.editor.fontSize);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const diagnosticsEnabled = useAppSelector((s) => s.editor.diagnostics);
+  const s = useAppSelector((s) => s.editor.settings);
+  const dispatch = useAppDispatch();
   const contentRef = useRef<HTMLDivElement>(null);
-
-  const s = state.settings;
 
   const [availableFonts, setAvailableFonts] = useState<string[]>(["monospace"]);
   useEffect(() => { setAvailableFonts(detectAvailableFonts()); }, []);
+
+  // Focus the search input once when the Settings panel first appears, rather
+  // than via `autoFocus` which steals focus on any remount.
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState("");
   const q = searchQuery.toLowerCase();
   const match = (...terms: (string | undefined)[]) =>
     !q || terms.some((t) => t?.toLowerCase().includes(q));
 
-
-  // App.tsx auto-saves all settings whenever state changes, so we only dispatch here.
-
-  const setTheme = (v: AppTheme) => {
-    dispatch({ type: "SET_THEME", theme: v });
+  const handleSetTheme = (v: AppTheme) => {
+    dispatch(setTheme(v));
   };
 
-  const setFontSize = (v: number) => {
-    const clamped = Math.max(8, Math.min(72, v));
-    dispatch({ type: "SET_FONT_SIZE", fontSize: clamped });
+  const handleSetFontSize = (v: number) => {
+    dispatch(setFontSize(Math.max(8, Math.min(72, v))));
   };
 
-  const setWordWrap = (v: "off" | "on") => {
-    dispatch({ type: "SET_WORD_WRAP", wordWrap: v });
+  const handleSetWordWrap = (v: "off" | "on") => {
+    dispatch(setWordWrap(v));
   };
 
-  const setMinimap = (v: boolean) => {
-    dispatch({ type: "SET_MINIMAP", minimap: v });
+  const handleSetMinimap = (v: boolean) => {
+    dispatch(setMinimap(v));
   };
 
   function setSetting<K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) {
-    dispatch({ type: "UPDATE_SETTING", key, value: value as EditorSettings[keyof EditorSettings] });
+    dispatch(updateSetting(key, value));
   }
-
-  // ── Reset to defaults ─────────────────────────────────────────────────────
 
   const handleResetAll = async () => {
     const defaults = { ...DEFAULT_PERSISTED_SETTINGS };
-    dispatch({ type: "SET_THEME", theme: defaults.theme });
-    dispatch({ type: "SET_FONT_SIZE", fontSize: defaults.fontSize });
-    dispatch({ type: "SET_WORD_WRAP", wordWrap: defaults.wordWrap });
-    dispatch({ type: "SET_MINIMAP", minimap: defaults.minimap });
-    dispatch({ type: "SET_DIAGNOSTICS", diagnostics: defaults.diagnostics });
-    dispatch({ type: "LOAD_SETTINGS", settings: { ...DEFAULT_EDITOR_SETTINGS } });
-    await saveSettings(defaults);
+    dispatch(setTheme(defaults.theme));
+    dispatch(setFontSize(defaults.fontSize));
+    dispatch(setWordWrap(defaults.wordWrap));
+    dispatch(setMinimap(defaults.minimap));
+    dispatch(setDiagnostics(defaults.diagnostics));
+    dispatch(loadSettingsAction({ ...DEFAULT_EDITOR_SETTINGS }));
+    const ok = await saveSettings(defaults);
+    if (!ok) {
+      showNotification(
+        dispatch,
+        "warning",
+        "LiteCode could not persist the reset settings to disk."
+      );
+    }
   };
 
-  // ── Nav scroll ────────────────────────────────────────────────────────────
-
   const scrollTo = (id: string) => {
-    const el = contentRef.current?.querySelector(`#section-${id}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const el = contentRef.current?.querySelector(`#section-${id}`) as HTMLElement | null;
+    if (!el || !contentRef.current) return;
+    const container = contentRef.current;
+    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    container.scrollTo({ top, behavior: "smooth" });
   };
 
   return (
     <div className="settings-page">
-      {/* ── Sidebar ── */}
       <aside className="st-sidebar">
         <div className="st-sidebar-header">Settings</div>
         <input
+          ref={searchInputRef}
           className="st-search-input"
           type="text"
           placeholder="Search settings…"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          autoFocus
         />
         <nav className="st-nav">
           {CATEGORIES.map((c) => (
@@ -184,18 +198,16 @@ export default function Settings() {
         </div>
       </aside>
 
-      {/* ── Content ── */}
       <main className="st-content" ref={contentRef}>
         <div className="st-content-inner">
 
-          {/* ──────────────────── APPEARANCE ──────────────────── */}
           <SectionHeader id="appearance" title="Appearance" hidden={!match("Appearance", "Color Theme", "Font Family", "Font Size", "Line Height", "Font Ligatures")} />
 
           <Row label="Color Theme" description="Select the editor color theme." hidden={!match("Color Theme", "Select the editor color theme.")}>
             <select
               className="st-select"
-              value={state.theme}
-              onChange={(e) => setTheme(e.target.value as AppTheme)}
+              value={theme}
+              onChange={(e) => handleSetTheme(e.target.value as AppTheme)}
             >
               <option value="vs-dark">Dark (VS Dark)</option>
               <option value="vs">Light (VS)</option>
@@ -209,6 +221,9 @@ export default function Settings() {
               value={s.fontFamily}
               onChange={(e) => setSetting("fontFamily", e.target.value)}
             >
+              {!availableFonts.includes(s.fontFamily) && s.fontFamily && (
+                <option value={s.fontFamily}>{s.fontFamily}</option>
+              )}
               {availableFonts.map((f) => (
                 <option key={f} value={f}>{f}</option>
               ))}
@@ -217,16 +232,16 @@ export default function Settings() {
 
           <Row label="Font Size" description="Controls the font size in pixels (8–72)." hidden={!match("Font Size", "Controls the font size in pixels")}>
             <div className="st-number-row">
-              <button className="st-stepper" onClick={() => setFontSize(state.fontSize - 1)}>−</button>
+              <button className="st-stepper" onClick={() => handleSetFontSize(fontSize - 1)}>−</button>
               <input
                 className="st-input st-input-number"
                 type="number"
                 min={8}
                 max={72}
-                value={state.fontSize}
-                onChange={(e) => setFontSize(parseInt(e.target.value, 10) || 14)}
+                value={fontSize}
+                onChange={(e) => handleSetFontSize(parseInt(e.target.value, 10) || 14)}
               />
-              <button className="st-stepper" onClick={() => setFontSize(state.fontSize + 1)}>+</button>
+              <button className="st-stepper" onClick={() => handleSetFontSize(fontSize + 1)}>+</button>
             </div>
           </Row>
 
@@ -256,14 +271,13 @@ export default function Settings() {
             </label>
           </Row>
 
-          {/* ──────────────────── EDITOR ──────────────────── */}
           <SectionHeader id="editor" title="Editor" hidden={!match("Editor", "Word Wrap", "Line Numbers", "Minimap", "Whitespace", "Folding", "Links", "Diagnostics")} />
 
           <Row label="Word Wrap" description="Controls how lines should wrap." hidden={!match("Word Wrap", "Controls how lines should wrap")}>
             <select
               className="st-select"
-              value={state.wordWrap}
-              onChange={(e) => setWordWrap(e.target.value as "off" | "on")}
+              value={wordWrap}
+              onChange={(e) => handleSetWordWrap(e.target.value as "off" | "on")}
             >
               <option value="off">Off</option>
               <option value="on">On</option>
@@ -301,8 +315,8 @@ export default function Settings() {
             <label className="st-toggle">
               <input
                 type="checkbox"
-                checked={state.minimap}
-                onChange={(e) => setMinimap(e.target.checked)}
+                checked={minimapEnabled}
+                onChange={(e) => handleSetMinimap(e.target.checked)}
               />
               <span className="st-toggle-track" />
             </label>
@@ -359,14 +373,13 @@ export default function Settings() {
             <label className="st-toggle">
               <input
                 type="checkbox"
-                checked={state.diagnostics}
-                onChange={(e) => dispatch({ type: "SET_DIAGNOSTICS", diagnostics: e.target.checked })}
+                checked={diagnosticsEnabled}
+                onChange={(e) => dispatch(setDiagnostics(e.target.checked))}
               />
               <span className="st-toggle-track" />
             </label>
           </Row>
 
-          {/* ──────────────────── INDENTATION ──────────────────── */}
           <SectionHeader id="indentation" title="Indentation" hidden={!match("Indentation", "Tab Size", "Insert Spaces", "Detect Indentation")} />
 
           <Row label="Tab Size" description="The number of spaces a tab is equal to." hidden={!match("Tab Size", "spaces a tab")}>
@@ -406,7 +419,6 @@ export default function Settings() {
             </label>
           </Row>
 
-          {/* ──────────────────── CURSOR ──────────────────── */}
           <SectionHeader id="cursor" title="Cursor" hidden={!match("Cursor", "Cursor Blinking", "Cursor Style")} />
 
           <Row label="Cursor Blinking" description="Controls the cursor animation style." hidden={!match("Cursor Blinking", "cursor animation")}>
@@ -438,7 +450,6 @@ export default function Settings() {
             </select>
           </Row>
 
-          {/* ──────────────────── SCROLLING ──────────────────── */}
           <SectionHeader id="scrolling" title="Scrolling" hidden={!match("Scrolling", "Smooth Scrolling", "Mouse Wheel Zoom", "Scroll Beyond")} />
 
           <Row label="Smooth Scrolling" description="Controls whether the editor will scroll using an animation." hidden={!match("Smooth Scrolling", "scroll using an animation")}>
@@ -474,7 +485,6 @@ export default function Settings() {
             </label>
           </Row>
 
-          {/* ──────────────────── FORMATTING ──────────────────── */}
           <SectionHeader id="formatting" title="Formatting" hidden={!match("Formatting", "Format On Paste", "Format On Type", "Auto Closing Brackets", "Auto Closing Quotes")} />
 
           <Row label="Format On Paste" description="Controls whether the editor should automatically format the pasted content." hidden={!match("Format On Paste", "format the pasted content")}>
@@ -525,7 +535,6 @@ export default function Settings() {
             </select>
           </Row>
 
-          {/* ──────────────────── GUIDES & BRACKETS ──────────────────── */}
           <SectionHeader id="guides" title="Guides & Brackets" hidden={!match("Guides", "Brackets", "Bracket Pair", "Match Brackets", "Auto Surround")} />
 
           <Row label="Bracket Pair Colorization" description="Controls whether bracket pair colorization is enabled." hidden={!match("Bracket Pair Colorization", "bracket pair colorization")}>
@@ -575,7 +584,6 @@ export default function Settings() {
             </select>
           </Row>
 
-          {/* ──────────────────── SUGGESTIONS ──────────────────── */}
           <SectionHeader id="suggestions" title="Suggestions" hidden={!match("Suggestions", "Quick Suggestions", "Parameter Hints", "Accept Suggestion", "Tab Completion", "Snippet")} />
 
           <Row label="Quick Suggestions" description="Controls whether suggestions should automatically show up while typing." hidden={!match("Quick Suggestions", "suggestions should automatically")}>

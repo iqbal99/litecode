@@ -1,8 +1,8 @@
 import { load } from "@tauri-apps/plugin-store";
+import { MAX_RECENT_FILES } from "../types";
 
 const STORE_NAME = "litecode-settings.json";
 const RECENT_KEY = "recentFiles";
-const MAX_RECENT = 20;
 
 /**
  * Load recent files list from persistent store.
@@ -23,7 +23,7 @@ export async function loadRecentFiles(): Promise<string[]> {
 export async function saveRecentFiles(files: string[]): Promise<void> {
   try {
     const store = await load(STORE_NAME, { defaults: {}, autoSave: true });
-    await store.set(RECENT_KEY, files.slice(0, MAX_RECENT));
+    await store.set(RECENT_KEY, files.slice(0, MAX_RECENT_FILES));
   } catch (err) {
     console.error("Failed to save recent files:", err);
   }
@@ -31,7 +31,7 @@ export async function saveRecentFiles(files: string[]): Promise<void> {
 
 /**
  * Add a single file to the persistent store (fire-and-forget safe).
- * Call this whenever a file is opened; it deduplicates and trims to MAX_RECENT.
+ * Call this whenever a file is opened; it deduplicates and trims to MAX_RECENT_FILES.
  * Uses a promise queue to serialize writes and prevent lost updates.
  */
 let persistQueue = Promise.resolve();
@@ -42,7 +42,7 @@ export function persistRecentFile(filePath: string): Promise<void> {
       const store = await load(STORE_NAME, { defaults: {}, autoSave: true });
       const current = (await store.get<string[]>(RECENT_KEY)) ?? [];
       const filtered = current.filter((f) => f !== filePath);
-      const updated = [filePath, ...filtered].slice(0, MAX_RECENT);
+      const updated = [filePath, ...filtered].slice(0, MAX_RECENT_FILES);
       await store.set(RECENT_KEY, updated);
     } catch (err) {
       console.error("Failed to persist recent file:", err);

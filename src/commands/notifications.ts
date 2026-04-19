@@ -1,16 +1,11 @@
-import type { AppNotification, EditorAction } from "../types";
+import type { AppNotification } from "../types";
+import type { AppDispatch } from "../store/store";
+import { showNotification as showNotificationAction } from "../store/editorSlice";
 
 export function showNotification(
-  dispatch: React.Dispatch<EditorAction>,
+  dispatch: AppDispatch,
   kind: AppNotification["kind"],
   message: string
 ): void {
-  dispatch({
-    type: "SHOW_NOTIFICATION",
-    notification: {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      kind,
-      message,
-    },
-  });
+  dispatch(showNotificationAction(kind, message));
 }

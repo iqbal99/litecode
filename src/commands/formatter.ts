@@ -58,6 +58,13 @@ const WHITESPACE_ONLY: ReadonlySet<string> = new Set([
   "xml",
 ]);
 
+// Languages where leading-whitespace normalization (tabs↔spaces) could change
+// semantics — leave their indentation characters exactly as the user wrote them.
+const LEADING_WHITESPACE_SENSITIVE: ReadonlySet<string> = new Set([
+  "python",
+  "yaml",
+]);
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Build a single indent unit from editor options. */
@@ -66,25 +73,72 @@ function indentUnit(opts: monaco.editor.TextModelResolvedOptions): string {
 }
 
 /** Strip all leading whitespace but preserve the rest of the line. */
-function stripLeading(line: string): string {
+export function stripLeading(line: string): string {
   return line.replace(/^\s+/, "");
 }
 
-/** Count net bracket delta for a line (ignoring strings/comments is too complex
- *  without a parser — this simple heuristic works well for typical code). */
-function bracketDelta(line: string): { open: number; close: number } {
+/** State for the tokenizer to track context across characters/lines. */
+export interface TokenizerState {
+  inBlockComment: boolean;
+  inString: string | null; // stores the quote character (', ", `) or null
+}
+
+/** Count net bracket delta for a line, ignoring brackets inside strings and comments.
+ * Returns the counts and updates the tokenizer state. */
+export function bracketDelta(
+  line: string,
+  state: TokenizerState
+): { open: number; close: number } {
   let open = 0;
   let close = 0;
-  for (const ch of line) {
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (state.inBlockComment) {
+      if (ch === "*" && next === "/") {
+        state.inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (state.inString) {
+      if (ch === "\\") {
+        i++; // skip escaped character
+      } else if (ch === state.inString) {
+        state.inString = null;
+      }
+      continue;
+    }
+
+    // Start of line comment
+    if (ch === "/" && next === "/") break;
+
+    // Start of block comment
+    if (ch === "/" && next === "*") {
+      state.inBlockComment = true;
+      i++;
+      continue;
+    }
+
+    // Start of string literal
+    if (ch === "'" || ch === "\"" || ch === "`") {
+      state.inString = ch;
+      continue;
+    }
+
     if (ch === "{" || ch === "(" || ch === "[") open++;
     if (ch === "}" || ch === ")" || ch === "]") close++;
   }
+
   return { open, close };
 }
 
 // ── Formatting logic ──────────────────────────────────────────────────────────
 
-function cleanWhitespace(text: string): string {
+export function cleanWhitespace(text: string): string {
   const lines = text.split(/\r?\n/);
 
   // Trim trailing whitespace per line
@@ -112,13 +166,14 @@ function cleanWhitespace(text: string): string {
   return collapsed.join("\n");
 }
 
-function reindentBrackets(
+export function reindentBrackets(
   text: string,
   unit: string,
 ): string {
   const lines = text.split(/\r?\n/);
   const result: string[] = [];
   let indent = 0;
+  const state: TokenizerState = { inBlockComment: false, inString: null };
 
   for (const raw of lines) {
     const stripped = stripLeading(raw);
@@ -128,10 +183,15 @@ function reindentBrackets(
       continue;
     }
 
-    const { open, close } = bracketDelta(stripped);
+    // Capture state BEFORE processing the line to check for leading close brackets
+    const wasInBlockComment = state.inBlockComment;
+    const wasInString = state.inString;
 
-    // Lines starting with a closing bracket should de-indent first
-    const leadingClose = /^[\}\)\]]/.test(stripped);
+    const { open, close } = bracketDelta(stripped, state);
+
+    // Lines starting with a closing bracket should de-indent first.
+    // Only apply if we weren't inside a multiline token (comment/string).
+    const leadingClose = !wasInBlockComment && !wasInString && /^[\}\)\]]/.test(stripped);
     if (leadingClose) {
       indent = Math.max(0, indent - 1);
     }
@@ -139,7 +199,6 @@ function reindentBrackets(
     result.push(unit.repeat(indent) + stripped);
 
     // Adjust indent for next line based on net bracket change
-    // If we already handled a leading close, only count net from open/close
     if (leadingClose) {
       // We already decremented once for the leading close bracket.
       // Adjust for any remaining brackets on this line.
@@ -168,8 +227,13 @@ function formatGeneric(
   }
 
   // Step 3: Normalize existing indentation for whitespace-only languages
-  // Convert tabs↔spaces to match editor settings without changing indent levels
-  if (WHITESPACE_ONLY.has(languageId)) {
+  // Convert tabs↔spaces to match editor settings without changing indent levels.
+  // Skip for languages where tab/space mixing is semantically meaningful
+  // (Python's PEP 8 forbids mixing; YAML requires consistent spaces).
+  if (
+    WHITESPACE_ONLY.has(languageId) &&
+    !LEADING_WHITESPACE_SENSITIVE.has(languageId)
+  ) {
     const lines = result.split("\n");
     result = lines
       .map((line) => {
@@ -194,6 +258,17 @@ function formatGeneric(
   }
 
   return result;
+}
+
+/**
+ * Safe range formatting: only cleans whitespace within the selected range,
+ * never re-indents. Full-document re-indentation on a slice would corrupt
+ * indentation relative to the rest of the file.
+ */
+function formatRangeWhitespaceOnly(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const trimmed = lines.map((l) => l.replace(/[ \t]+$/, ""));
+  return trimmed.join("\n");
 }
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -230,8 +305,10 @@ export function registerFormatters(m: typeof monaco): void {
     m.languages.registerDocumentRangeFormattingEditProvider(langId, {
       provideDocumentRangeFormattingEdits(model, range, _options) {
         const text = model.getValueInRange(range);
-        const resolvedOpts = model.getOptions();
-        const formatted = formatGeneric(text, langId, resolvedOpts);
+        // Range formatting never attempts bracket re-indentation: that requires
+        // full-document context and would corrupt the slice relative to the
+        // surrounding code. Fall back to safe whitespace cleanup only.
+        const formatted = formatRangeWhitespaceOnly(text);
 
         if (formatted === text) return [];
 

@@ -12,7 +12,16 @@ import {
   Settings2,
   CircleAlert,
 } from "lucide-react";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { getEditorRef } from "../store/editorRef";
+import {
+  setWordWrap,
+  setMinimap,
+  setDiagnostics,
+  setFontSize,
+  openSettings,
+  closeSettings,
+} from "../store/editorSlice";
 import {
   newFile,
   openFile,
@@ -22,8 +31,6 @@ import {
 } from "../commands/fileOps";
 import { cycleTheme } from "../commands/theme";
 import { sc } from "../utils/platform";
-
-// ─── Icon Button ─────────────────────────────────────────────────────────────
 
 interface IconButtonProps {
   label: string;
@@ -37,7 +44,9 @@ function IconBtn({ label, onClick, disabled = false, active = false, children }:
   return (
     <button
       className={`tb-btn${active ? " tb-active" : ""}${disabled ? " tb-disabled" : ""}`}
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
+      disabled={disabled}
+      aria-disabled={disabled || undefined}
       title={label}
       aria-label={label}
       type="button"
@@ -54,61 +63,75 @@ function Sep() {
 const IC = 18;
 
 export default function ToolBar() {
-  const { state, dispatch, editorRef } = useEditor();
-  const getEditor = () => editorRef.current;
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const diagnosticsEnabled = useAppSelector((s) => s.editor.diagnostics);
+  const theme = useAppSelector((s) => s.editor.theme);
+  const fontSize = useAppSelector((s) => s.editor.fontSize);
+  const isSettingsOpen = useAppSelector((s) => s.editor.isSettingsOpen);
+  const dispatch = useAppDispatch();
 
-  const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
-  const hasEditorTab = state.tabs.some((t) => !t.isSettings) && !activeTab?.isSettings;
+  const getEditor = () => getEditorRef();
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const hasEditorTab = tabs.some((t) => !t.isSettings) && !activeTab?.isSettings;
   const isDirty = activeTab?.isDirty ?? false;
 
-  // File ops
   const handleNew   = () => newFile(dispatch);
   const handleOpen  = () => openFile(dispatch);
-  const handleSave  = () => {
+  const handleSave  = async () => {
     if (!activeTab) return;
-    activeTab.filePath ? saveFile(activeTab, dispatch) : saveFileAs(activeTab, dispatch);
+    if (activeTab.filePath) {
+      await saveFile(activeTab, dispatch);
+    } else {
+      await saveFileAs(activeTab, dispatch);
+    }
   };
-  const handleSaveAs = () => { if (activeTab) saveFileAs(activeTab, dispatch); };
-  const handleClose  = () => { if (activeTab) closeTab(activeTab, dispatch); };
+  const handleSaveAs = async () => {
+    if (activeTab) {
+      await saveFileAs(activeTab, dispatch);
+    }
+  };
+  const handleClose  = async () => {
+    if (!activeTab) return;
+    if (activeTab.isSettings) {
+      dispatch(closeSettings());
+      return;
+    }
+    await closeTab(activeTab, dispatch);
+  };
 
-  // Edit ops — delegate to Monaco
   const handleUndo   = () => getEditor()?.trigger("toolbar", "undo", null);
   const handleRedo   = () => getEditor()?.trigger("toolbar", "redo", null);
 
-  // Code ops
   const handleFormat  = () => getEditor()?.getAction("editor.action.formatDocument")?.run();
   const handleComment = () => getEditor()?.getAction("editor.action.commentLine")?.run();
   const handleFold    = () => getEditor()?.getAction("editor.foldAll")?.run();
   const handleUnfold  = () => getEditor()?.getAction("editor.unfoldAll")?.run();
 
-  // Find
   const handleFind    = () => getEditor()?.getAction("actions.find")?.run();
   const handleReplace = () => getEditor()?.getAction("editor.action.startFindReplaceAction")?.run();
 
-  // View toggles
   const handleWordWrap = () => {
-    const next = state.wordWrap === "on" ? "off" : "on";
-    dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
+    const next = wordWrap === "on" ? "off" : "on";
+    dispatch(setWordWrap(next as "on" | "off"));
   };
   const handleMinimap = () => {
-    dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
+    dispatch(setMinimap(!minimapEnabled));
   };
-  const handleTheme = () => cycleTheme(state.theme, dispatch);
+  const handleTheme = () => cycleTheme(theme, dispatch);
 
-  // Font
   const handleFontDec = () => {
-    const next = Math.max(state.fontSize - 1, 8);
-    dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+    dispatch(setFontSize(Math.max(fontSize - 1, 8)));
   };
   const handleFontInc = () => {
-    const next = Math.min(state.fontSize + 1, 72);
-    dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+    dispatch(setFontSize(Math.min(fontSize + 1, 72)));
   };
 
-  // Editor command palette (Monaco built-in ⇧⌘P)
   const handleEditorCommands = () => getEditor()?.trigger("", "editor.action.quickCommand", null);
 
-  // Line operations
   const handleDuplicateDown  = () => getEditor()?.getAction("editor.action.copyLinesDownAction")?.run();
   const handleDeleteLine     = () => getEditor()?.getAction("editor.action.deleteLines")?.run();
   const handleMoveLinesUp    = () => getEditor()?.getAction("editor.action.moveLinesUpAction")?.run();
@@ -117,26 +140,22 @@ export default function ToolBar() {
   const handleSortAsc        = () => getEditor()?.getAction("editor.action.sortLinesAscending")?.run();
   const handleSortDesc       = () => getEditor()?.getAction("editor.action.sortLinesDescending")?.run();
 
-  // Transform
   const handleUpperCase  = () => getEditor()?.getAction("editor.action.transformToUppercase")?.run();
   const handleLowerCase  = () => getEditor()?.getAction("editor.action.transformToLowercase")?.run();
   const handleTitleCase  = () => getEditor()?.getAction("editor.action.transformToTitlecase")?.run();
 
-  // Indent & Clean
   const handleIndent     = () => getEditor()?.getAction("editor.action.indentLines")?.run();
   const handleOutdent    = () => getEditor()?.getAction("editor.action.outdentLines")?.run();
   const handleTrimWS     = () => getEditor()?.getAction("editor.action.trimTrailingWhitespace")?.run();
   const handleSelectLine = () => getEditor()?.getAction("expandLineSelection")?.run();
 
-  // Settings panel
   const handleSettings = () => {
-    dispatch({ type: state.isSettingsOpen ? "CLOSE_SETTINGS" : "OPEN_SETTINGS" });
+    dispatch(isSettingsOpen ? closeSettings() : openSettings());
   };
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Editor toolbar">
 
-      {/* ── Group 1: File ── */}
       <div className="tb-group">
         <IconBtn label={`New File  ${sc("⌘N", "Ctrl+N")}`} onClick={handleNew}><FilePlus size={IC} /></IconBtn>
         <IconBtn label={`Open File  ${sc("⌘O", "Ctrl+O")}`} onClick={handleOpen}><FolderOpen size={IC} /></IconBtn>
@@ -147,7 +166,6 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 2: Edit ── */}
       <div className="tb-group">
         <IconBtn label={`Undo  ${sc("⌘Z", "Ctrl+Z")}`} onClick={handleUndo} disabled={!hasEditorTab}><Undo2 size={IC} /></IconBtn>
         <IconBtn label={`Redo  ${sc("⇧⌘Z", "Ctrl+Y")}`} onClick={handleRedo} disabled={!hasEditorTab}><Redo2 size={IC} /></IconBtn>
@@ -155,7 +173,6 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 3: Code ── */}
       <div className="tb-group">
         <IconBtn label={`Format Document  ${sc("⇧⌥F", "Shift+Alt+F")}`} onClick={handleFormat} disabled={!hasEditorTab}><WandSparkles size={IC} /></IconBtn>
         <IconBtn label={`Toggle Line Comment  ${sc("⌘/", "Ctrl+/")}`} onClick={handleComment} disabled={!hasEditorTab}><MessageSquareCode size={IC} /></IconBtn>
@@ -166,7 +183,6 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 4: Search ── */}
       <div className="tb-group">
         <IconBtn label={`Find  ${sc("⌘F", "Ctrl+F")}`} onClick={handleFind} disabled={!hasEditorTab}><Search size={IC} /></IconBtn>
         <IconBtn label={`Find & Replace  ${sc("⌥⌘F", "Ctrl+H")}`} onClick={handleReplace} disabled={!hasEditorTab}><Replace size={IC} /></IconBtn>
@@ -174,26 +190,23 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 5: View toggles ── */}
       <div className="tb-group">
-        <IconBtn label={`Word Wrap: ${state.wordWrap === "on" ? "On" : "Off"}  ${sc("⌥Z", "Alt+Z")}`} onClick={handleWordWrap} active={state.wordWrap === "on"}><WrapText size={IC} /></IconBtn>
-        <IconBtn label={`Minimap: ${state.minimap ? "On" : "Off"}`} onClick={handleMinimap} active={state.minimap}><Map size={IC} /></IconBtn>
-        <IconBtn label={`Diagnostics: ${state.diagnostics ? "On" : "Off"}`} onClick={() => { dispatch({ type: "SET_DIAGNOSTICS", diagnostics: !state.diagnostics }); }} active={state.diagnostics}><CircleAlert size={IC} /></IconBtn>
-        <IconBtn label={`Theme: ${state.theme}`} onClick={handleTheme}><Palette size={IC} /></IconBtn>
+        <IconBtn label={`Word Wrap: ${wordWrap === "on" ? "On" : "Off"}  ${sc("⌥Z", "Alt+Z")}`} onClick={handleWordWrap} active={wordWrap === "on"}><WrapText size={IC} /></IconBtn>
+        <IconBtn label={`Minimap: ${minimapEnabled ? "On" : "Off"}`} onClick={handleMinimap} active={minimapEnabled}><Map size={IC} /></IconBtn>
+        <IconBtn label={`Diagnostics: ${diagnosticsEnabled ? "On" : "Off"}`} onClick={() => { dispatch(setDiagnostics(!diagnosticsEnabled)); }} active={diagnosticsEnabled}><CircleAlert size={IC} /></IconBtn>
+        <IconBtn label={`Theme: ${theme}`} onClick={handleTheme}><Palette size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
-      {/* ── Group 6: Font size ── */}
       <div className="tb-group tb-font-group">
         <IconBtn label={`Decrease Font Size  ${sc("⌘−", "Ctrl+−")}`} onClick={handleFontDec}><AArrowDown size={IC} /></IconBtn>
-        <span className="tb-font-size" title="Current font size">{state.fontSize}</span>
+        <span className="tb-font-size" title="Current font size">{fontSize}</span>
         <IconBtn label={`Increase Font Size  ${sc("⌘=", "Ctrl+=")}`} onClick={handleFontInc}><AArrowUp size={IC} /></IconBtn>
       </div>
 
       <Sep />
 
-      {/* ── Group 7: Line Operations ── */}
       <div className="tb-group">
         <IconBtn label={`Duplicate Line Down  ${sc("⇧⌥↓", "Shift+Alt+↓")}`} onClick={handleDuplicateDown} disabled={!hasEditorTab}><CopyPlus size={IC} /></IconBtn>
         <IconBtn label={`Delete Line  ${sc("⇧⌘K", "Ctrl+Shift+K")}`} onClick={handleDeleteLine} disabled={!hasEditorTab}><Trash2 size={IC} /></IconBtn>
@@ -206,7 +219,6 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 8: Transform ── */}
       <div className="tb-group">
         <IconBtn label="Transform to UPPERCASE" onClick={handleUpperCase} disabled={!hasEditorTab}><CaseUpper size={IC} /></IconBtn>
         <IconBtn label="Transform to lowercase" onClick={handleLowerCase} disabled={!hasEditorTab}><CaseLower size={IC} /></IconBtn>
@@ -215,7 +227,6 @@ export default function ToolBar() {
 
       <Sep />
 
-      {/* ── Group 9: Indent & Clean ── */}
       <div className="tb-group">
         <IconBtn label={`Indent Lines  ${sc("⌘]", "Ctrl+]")}`} onClick={handleIndent} disabled={!hasEditorTab}><Indent size={IC} /></IconBtn>
         <IconBtn label={`Outdent Lines  ${sc("⌘[", "Ctrl+[")}`} onClick={handleOutdent} disabled={!hasEditorTab}><Outdent size={IC} /></IconBtn>
@@ -223,7 +234,6 @@ export default function ToolBar() {
         <IconBtn label={`Select Line  ${sc("⌘L", "Ctrl+L")}`} onClick={handleSelectLine} disabled={!hasEditorTab}><TextSelect size={IC} /></IconBtn>
       </div>
 
-      {/* ── Dirty indicator ─────── right-aligned ── */}
       {isDirty && (
         <span className="tb-dirty-pill" title="Unsaved changes">
           <span className="tb-dirty-dot" />
@@ -231,12 +241,11 @@ export default function ToolBar() {
         </span>
       )}
 
-      {/* ── Settings ─────────────────────────── far right ── */}
       <div className="tb-group tb-settings-group">
         <IconBtn
           label={`Settings  ${sc("⌘,", "Ctrl+,")}`}
           onClick={handleSettings}
-          active={state.isSettingsOpen}
+          active={isSettingsOpen}
         >
           <Settings2 size={IC} />
         </IconBtn>

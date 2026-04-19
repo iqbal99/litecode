@@ -1,13 +1,15 @@
 import { useCallback } from "react";
 import { exists } from "@tauri-apps/plugin-fs";
 import { FilePlus, FolderOpen, Clock, Trash2 } from "lucide-react";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { setRecentFiles } from "../store/editorSlice";
 import { newFile, openFile, openFilePath } from "../commands/fileOps";
 import { clearRecentFiles, saveRecentFiles } from "../store/recentFiles";
 import { sc } from "../utils/platform";
 
 export default function Welcome() {
-  const { state, dispatch } = useEditor();
+  const recentFiles = useAppSelector((s) => s.editor.recentFiles);
+  const dispatch = useAppDispatch();
 
   const handleNew = useCallback(() => {
     newFile(dispatch);
@@ -21,25 +23,31 @@ export default function Welcome() {
     async (path: string) => {
       const opened = await openFilePath(path, dispatch);
       if (!opened) {
-        const missing = !(await exists(path).catch(() => true));
+        // Only prune the entry if exists() definitively reports missing.
+        // On I/O errors, leave the entry alone so a transient failure does
+        // not destroy history.
+        let missing = false;
+        try {
+          missing = !(await exists(path));
+        } catch {
+          missing = false;
+        }
         if (missing) {
-          const nextRecent = state.recentFiles.filter((entry) => entry !== path);
-          dispatch({ type: "SET_RECENT_FILES", recentFiles: nextRecent });
+          const nextRecent = recentFiles.filter((entry) => entry !== path);
+          dispatch(setRecentFiles(nextRecent));
           await saveRecentFiles(nextRecent);
         }
       }
     },
-    [dispatch, state.recentFiles]
+    [dispatch, recentFiles]
   );
 
   const handleClearRecent = useCallback(async () => {
     await clearRecentFiles();
-    dispatch({ type: "SET_RECENT_FILES", recentFiles: [] });
+    dispatch(setRecentFiles([]));
   }, [dispatch]);
 
-  // Extract just the filename from a path (handles both / and \)
   const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
-  // Extract directory portion
   const dirName = (path: string) => {
     const parts = path.split(/[\\/]/);
     parts.pop();
@@ -65,7 +73,7 @@ export default function Welcome() {
           </button>
         </div>
 
-        {state.recentFiles.length > 0 && (
+        {recentFiles.length > 0 && (
           <div className="welcome-recent">
             <div className="welcome-recent-header">
               <h2><Clock size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Recent Files</h2>
@@ -79,7 +87,7 @@ export default function Welcome() {
               </button>
             </div>
             <ul className="welcome-recent-list">
-              {state.recentFiles.map((path) => (
+              {recentFiles.map((path) => (
                 <li key={path}>
                   <button
                     className="welcome-recent-item"

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as monaco from "monaco-editor";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { setLanguage, setWordWrap, setMinimap } from "../store/editorSlice";
 import { cycleTheme } from "../commands/theme";
 import type { StatusInfo } from "../types";
 
@@ -8,17 +9,25 @@ const DEFAULT_TAB_SIZE = 2;
 const DEFAULT_INSERT_SPACES = true;
 
 export default function StatusBar() {
-  const { state, dispatch } = useEditor();
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const theme = useAppSelector((s) => s.editor.theme);
+  const dispatch = useAppDispatch();
+
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [langFilter, setLangFilter] = useState("");
   const langInputRef = useRef<HTMLInputElement>(null);
   const langContainerRef = useRef<HTMLSpanElement>(null);
 
-  const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const isSettingsTab = activeTab?.isSettings === true;
 
-  const model = activeTab
-    ? monaco.editor.getModel(monaco.Uri.parse(activeTab.modelUri))
-    : null;
+  const model =
+    activeTab && !isSettingsTab && activeTab.modelUri
+      ? monaco.editor.getModel(monaco.Uri.parse(activeTab.modelUri))
+      : null;
   const modelOptions = model?.getOptions();
   const tabSize = modelOptions?.tabSize ?? DEFAULT_TAB_SIZE;
   const insertSpaces = modelOptions?.insertSpaces ?? DEFAULT_INSERT_SPACES;
@@ -35,7 +44,6 @@ export default function StatusBar() {
     indentation,
   };
 
-  // ── Language picker ────────────────────────────────────────────────────────
   const allLanguages = useMemo(() => {
     return monaco.languages
       .getLanguages()
@@ -61,27 +69,28 @@ export default function StatusBar() {
 
   const closeLangPicker = useCallback(() => setShowLangPicker(false), []);
 
+  const langListRef = useRef<HTMLDivElement>(null);
+  const langButtonRef = useRef<HTMLButtonElement>(null);
+
   const selectLang = useCallback(
     (langId: string) => {
-      if (!activeTab) return;
+      if (!activeTab || !activeTab.modelUri) return;
       const m = monaco.editor.getModel(monaco.Uri.parse(activeTab.modelUri));
       if (m) {
         monaco.editor.setModelLanguage(m, langId);
-        dispatch({ type: "SET_LANGUAGE", tabId: activeTab.id, language: langId });
+        dispatch(setLanguage({ tabId: activeTab.id, language: langId }));
       }
       setShowLangPicker(false);
     },
     [activeTab, dispatch]
   );
 
-  // Focus input when picker opens
   useEffect(() => {
     if (showLangPicker) {
       setTimeout(() => langInputRef.current?.focus(), 30);
     }
   }, [showLangPicker]);
 
-  // Close on outside click
   useEffect(() => {
     if (!showLangPicker) return;
     const handler = (e: MouseEvent) => {
@@ -93,7 +102,21 @@ export default function StatusBar() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showLangPicker]);
 
-  // ── EOL toggle ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!showLangPicker || langHighlight < 0) return;
+    const list = langListRef.current;
+    if (!list) return;
+    const item = list.children[langHighlight] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [langHighlight, showLangPicker, filteredLangs.length]);
+
+  useEffect(() => {
+    // Keep the highlight in range when the list shrinks.
+    if (langHighlight >= filteredLangs.length) {
+      setLangHighlight(filteredLangs.length > 0 ? filteredLangs.length - 1 : -1);
+    }
+  }, [filteredLangs.length, langHighlight]);
+
   const handleEolToggle = useCallback(() => {
     if (!model || eol === "CR") return;
     const next =
@@ -103,24 +126,23 @@ export default function StatusBar() {
     model.pushEOL(next);
   }, [model, eol]);
 
-  // ── Other toggles ──────────────────────────────────────────────────────────
   const handleThemeClick = useCallback(() => {
-    cycleTheme(state.theme, dispatch);
-  }, [state.theme, dispatch]);
+    cycleTheme(theme, dispatch);
+  }, [theme, dispatch]);
 
   const handleWordWrapToggle = useCallback(() => {
-    const next = state.wordWrap === "on" ? "off" : "on";
-    dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
-  }, [state.wordWrap, dispatch]);
+    const next = wordWrap === "on" ? "off" : "on";
+    dispatch(setWordWrap(next as "on" | "off"));
+  }, [wordWrap, dispatch]);
 
   const handleMinimapToggle = useCallback(() => {
-    dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
-  }, [state.minimap, dispatch]);
+    dispatch(setMinimap(!minimapEnabled));
+  }, [minimapEnabled, dispatch]);
 
   return (
     <div className="status-bar">
       <div className="status-left">
-        {activeTab && (
+        {activeTab && !isSettingsTab && (
           <>
             <span className="status-item">
               Ln {info.lineNumber}, Col {info.column}
@@ -142,30 +164,41 @@ export default function StatusBar() {
         )}
       </div>
       <div className="status-right">
-        {activeTab && (
+        {activeTab && !isSettingsTab && (
           <span
             ref={langContainerRef}
             className="status-item status-language"
             style={{ position: "relative" }}
           >
             <button
+              ref={langButtonRef}
               className="status-btn"
               onClick={openLangPicker}
               title="Change language mode"
+              aria-haspopup="listbox"
+              aria-expanded={showLangPicker}
             >
               {info.language}
             </button>
             {showLangPicker && (
-              <div className="sb-lang-picker">
+              <div className="sb-lang-picker" role="dialog" aria-label="Select language mode">
                 <input
                   ref={langInputRef}
                   className="sb-lang-input"
                   type="text"
                   placeholder="Filter languages…"
                   value={langFilter}
+                  role="combobox"
+                  aria-controls="sb-lang-listbox"
+                  aria-expanded={showLangPicker}
+                  aria-autocomplete="list"
                   onChange={(e) => { setLangFilter(e.target.value); setLangHighlight(0); }}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape") { closeLangPicker(); return; }
+                    if (e.key === "Escape") {
+                      closeLangPicker();
+                      langButtonRef.current?.focus();
+                      return;
+                    }
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
                       setLangHighlight((h) => Math.min(h + 1, filteredLangs.length - 1));
@@ -182,14 +215,20 @@ export default function StatusBar() {
                     }
                   }}
                 />
-                <div className="sb-lang-list">
+                <div
+                  id="sb-lang-listbox"
+                  role="listbox"
+                  className="sb-lang-list"
+                  ref={langListRef}
+                >
                   {filteredLangs.map((l, i) => (
                     <div
                       key={l.id}
+                      role="option"
+                      aria-selected={i === langHighlight}
                       className={`sb-lang-item${activeTab?.language === l.id ? " sb-lang-current" : ""}${i === langHighlight ? " sb-lang-highlighted" : ""}`}
                       onClick={() => selectLang(l.id)}
                       onMouseEnter={() => setLangHighlight(i)}
-                      ref={(el) => { if (i === langHighlight && el) el.scrollIntoView({ block: "nearest" }); }}
                     >
                       <span>{l.name}</span>
                       {activeTab?.language === l.id && (
@@ -207,23 +246,23 @@ export default function StatusBar() {
           onClick={handleWordWrapToggle}
           title="Toggle word wrap"
         >
-          Wrap: {state.wordWrap === "on" ? "On" : "Off"}
+          Wrap: {wordWrap === "on" ? "On" : "Off"}
         </button>
         <button
           className="status-item status-btn"
           onClick={handleMinimapToggle}
           title="Toggle minimap"
         >
-          Minimap: {state.minimap ? "On" : "Off"}
+          Minimap: {minimapEnabled ? "On" : "Off"}
         </button>
         <button
           className="status-item status-btn"
           onClick={handleThemeClick}
           title="Cycle theme"
         >
-          {state.theme === "vs-dark"
+          {theme === "vs-dark"
             ? "Dark"
-            : state.theme === "vs"
+            : theme === "vs"
             ? "Light"
             : "HC"}
         </button>

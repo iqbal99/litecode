@@ -1,5 +1,3 @@
-import type * as monaco from "monaco-editor";
-
 export interface Tab {
   id: string;
   filePath: string | null; // null for untitled files
@@ -102,47 +100,10 @@ export interface EditorState {
   isSettingsOpen: boolean;
   diagnostics: boolean;
   notifications: AppNotification[];
+  notificationSeq: number;
 }
 
 export type AppTheme = "vs-dark" | "vs" | "hc-black";
-
-export type EditorAction =
-  | { type: "OPEN_TAB"; tab: Tab }
-  | { type: "CLOSE_TAB"; tabId: string }
-  | { type: "SET_ACTIVE_TAB"; tabId: string }
-  | { type: "MARK_DIRTY"; tabId: string }
-  | { type: "MARK_CLEAN"; tabId: string }
-  | { type: "UPDATE_TAB_PATH"; tabId: string; filePath: string; fileName: string }
-  | { type: "UPDATE_CURSOR"; tabId: string; position: { lineNumber: number; column: number } }
-  | { type: "UPDATE_SCROLL"; tabId: string; position: { scrollTop: number; scrollLeft: number } }
-  | { type: "SET_THEME"; theme: AppTheme }
-  | { type: "SET_FONT_SIZE"; fontSize: number }
-  | { type: "SET_WORD_WRAP"; wordWrap: "off" | "on" }
-  | { type: "SET_MINIMAP"; minimap: boolean }
-  | { type: "SET_RECENT_FILES"; recentFiles: string[] }
-  | { type: "ADD_RECENT_FILE"; filePath: string }
-  | { type: "SET_LANGUAGE"; tabId: string; language: string }
-  | {
-      type: "UPDATE_TAB_FILE_INFO";
-      tabId: string;
-      filePath: string;
-      fileName: string;
-      language: string;
-      modelUri: string;
-    }
-  | { type: "LOAD_SETTINGS"; settings: EditorSettings }
-  | { type: "UPDATE_SETTING"; key: keyof EditorSettings; value: EditorSettings[keyof EditorSettings] }
-  | { type: "OPEN_SETTINGS" }
-  | { type: "CLOSE_SETTINGS" }
-  | { type: "SET_DIAGNOSTICS"; diagnostics: boolean }
-  | { type: "SHOW_NOTIFICATION"; notification: AppNotification }
-  | { type: "CLEAR_NOTIFICATION"; id: number };
-
-export interface EditorContextType {
-  state: EditorState;
-  dispatch: React.Dispatch<EditorAction>;
-  editorRef: React.MutableRefObject<monaco.editor.IStandaloneCodeEditor | null>;
-}
 
 export interface StatusInfo {
   language: string;

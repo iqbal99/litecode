@@ -1,28 +1,36 @@
 import { useRef, useCallback, useEffect } from "react";
 import MonacoEditor, { BeforeMount, OnMount } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { getEditorRef, setEditorRef } from "../store/editorRef";
+import { updateCursor, markDirty, updateScroll } from "../store/editorSlice";
 import { watchFile, unwatchFile, unwatchAll } from "../commands/fileWatcher";
 import { registerFormatters } from "../commands/formatter";
 import type { Tab } from "../types";
 
 export default function Editor() {
-  const { state, dispatch, editorRef } = useEditor();
-  const disposablesRef = useRef<monaco.IDisposable[]>([]);
-  const activeTabId = state.activeTabId;
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const theme = useAppSelector((s) => s.editor.theme);
+  const fontSize = useAppSelector((s) => s.editor.fontSize);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const diagnosticsEnabled = useAppSelector((s) => s.editor.diagnostics);
+  const settings = useAppSelector((s) => s.editor.settings);
+  const dispatch = useAppDispatch();
 
-  // Always-fresh refs so event handlers never capture stale closures
-  const tabsRef = useRef<Tab[]>(state.tabs);
-  tabsRef.current = state.tabs;
+  const disposablesRef = useRef<monaco.IDisposable[]>([]);
+
+  const tabsRef = useRef<Tab[]>(tabs);
+  tabsRef.current = tabs;
   const activeTabIdRef = useRef<string | null>(activeTabId);
   activeTabIdRef.current = activeTabId;
-  const settingsRef = useRef(state.settings);
-  settingsRef.current = state.settings;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
-  // Track previous tab IDs to detect additions and removals
   const prevTabIdsRef = useRef<Set<string>>(new Set());
-  const prevTabPathsRef = useRef<Map<string, string>>(new Map()); // tabId → filePath
-  const activeTab = state.tabs.find((t) => t.id === activeTabId) ?? null;
+  const prevTabPathsRef = useRef<Map<string, string>>(new Map());
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
   const handleBeforeMount: BeforeMount = useCallback((m) => {
     m.editor.defineTheme("litecode-light", {
@@ -34,43 +42,61 @@ export default function Editor() {
       },
     });
 
-    // Register generic formatters for languages without Monaco built-in support
     registerFormatters(m);
   }, []);
 
-  const monacoTheme = state.theme === "vs" ? "litecode-light" : state.theme;
+  const monacoTheme = theme === "vs" ? "litecode-light" : theme;
 
   const handleMount: OnMount = useCallback(
     (editor) => {
-      editorRef.current = editor;
+      setEditorRef(editor);
 
-      // Set the model for the active tab
-      if (activeTab?.modelUri) {
+      // Dispose any leftover listeners from a prior (StrictMode) mount before adding new ones.
+      for (const d of disposablesRef.current) {
+        try { d.dispose(); } catch { /* ignore */ }
+      }
+      disposablesRef.current = [];
+
+      // Use the latest active tab at mount (not the value captured at first render).
+      const latestTabId = activeTabIdRef.current;
+      const latestTab = latestTabId
+        ? tabsRef.current.find((t) => t.id === latestTabId)
+        : null;
+      if (latestTab?.modelUri && !latestTab.isSettings) {
         const model = monaco.editor.getModel(
-          monaco.Uri.parse(activeTab.modelUri)
+          monaco.Uri.parse(latestTab.modelUri)
         );
-        if (model) editor.setModel(model);
+        if (model) {
+          editor.setModel(model);
+          if (latestTab.cursorPosition) {
+            editor.setPosition({
+              lineNumber: latestTab.cursorPosition.lineNumber,
+              column: latestTab.cursorPosition.column,
+            });
+          }
+          if (latestTab.scrollPosition) {
+            editor.setScrollTop(latestTab.scrollPosition.scrollTop);
+            editor.setScrollLeft(latestTab.scrollPosition.scrollLeft);
+          }
+        }
       }
 
-      // Cursor tracking — read activeTabIdRef so it’s always current
       disposablesRef.current.push(editor.onDidChangeCursorPosition((e) => {
         const tabId = activeTabIdRef.current;
         if (tabId) {
-          dispatch({
-            type: "UPDATE_CURSOR",
+          dispatch(updateCursor({
             tabId,
             position: {
               lineNumber: e.position.lineNumber,
               column: e.position.column,
             },
-          });
+          }));
         }
       }));
 
-      // Dirty tracking — same ref fix
       disposablesRef.current.push(editor.onDidChangeModelContent(() => {
         const tabId = activeTabIdRef.current;
-        if (tabId) dispatch({ type: "MARK_DIRTY", tabId });
+        if (tabId) dispatch(markDirty(tabId));
       }));
 
       editor.focus();
@@ -79,93 +105,93 @@ export default function Editor() {
     []
   );
 
-  // Switch model when active tab changes
   useEffect(() => {
-    const editor = editorRef.current;
+    const editor = getEditorRef();
     if (!editor) return;
 
-    if (!activeTab) {
+    if (!activeTab || activeTab.isSettings || !activeTab.modelUri) {
+      const prevModel = editor.getModel();
+      if (prevModel) {
+        const prevTab = tabs.find(
+          (t) => t.modelUri === prevModel.uri.toString()
+        );
+        if (prevTab) {
+          dispatch(updateScroll({
+            tabId: prevTab.id,
+            position: {
+              scrollTop: editor.getScrollTop(),
+              scrollLeft: editor.getScrollLeft(),
+            },
+          }));
+        }
+      }
       editor.setModel(null);
       return;
     }
 
-    if (activeTab.modelUri) {
-      const model = monaco.editor.getModel(
-        monaco.Uri.parse(activeTab.modelUri)
-      );
-      if (model && editor.getModel() !== model) {
-        // Save scroll position of previous tab
-        const prevModel = editor.getModel();
-        if (prevModel) {
-          const prevTab = state.tabs.find(
-            (t) => t.modelUri === prevModel.uri.toString()
-          );
-          if (prevTab) {
-            dispatch({
-              type: "UPDATE_SCROLL",
-              tabId: prevTab.id,
-              position: {
-                scrollTop: editor.getScrollTop(),
-                scrollLeft: editor.getScrollLeft(),
-              },
-            });
-          }
-        }
+    const model = monaco.editor.getModel(
+      monaco.Uri.parse(activeTab.modelUri)
+    );
+    if (!model) return;
 
-        editor.setModel(model);
+    const modelChanged = editor.getModel() !== model;
 
-        // Dispose orphaned models after the editor has switched away from them.
-        // This keeps Save As transitions stable for untitled files while still
-        // cleaning up the old in-memory model once no tab references it.
-        if (
-          prevModel &&
-          prevModel !== model &&
-          !state.tabs.some((t) => t.modelUri === prevModel.uri.toString())
-        ) {
-          prevModel.dispose();
+    if (modelChanged) {
+      const prevModel = editor.getModel();
+      if (prevModel) {
+        const prevTab = tabs.find(
+          (t) => t.modelUri === prevModel.uri.toString()
+        );
+        if (prevTab) {
+          dispatch(updateScroll({
+            tabId: prevTab.id,
+            position: {
+              scrollTop: editor.getScrollTop(),
+              scrollLeft: editor.getScrollLeft(),
+            },
+          }));
         }
-
-        // Seed indentation on newly-opened models:
-        // - always for empty/new files (nothing to detect from)
-        // - always when detectIndentation is off (user wants their settings forced)
-        if (model.getValue().length === 0 || !settingsRef.current.detectIndentation) {
-          model.updateOptions({
-            tabSize: settingsRef.current.tabSize,
-            insertSpaces: settingsRef.current.insertSpaces,
-          });
-        }
-
-        // Restore cursor/scroll for new tab
-        if (activeTab.cursorPosition) {
-          editor.setPosition({
-            lineNumber: activeTab.cursorPosition.lineNumber,
-            column: activeTab.cursorPosition.column,
-          });
-        }
-        if (activeTab.scrollPosition) {
-          editor.setScrollTop(activeTab.scrollPosition.scrollTop);
-          editor.setScrollLeft(activeTab.scrollPosition.scrollLeft);
-        }
-
-        editor.focus();
       }
+
+      editor.setModel(model);
+
+      if (model.getValue().length === 0 || !settingsRef.current.detectIndentation) {
+        model.updateOptions({
+          tabSize: settingsRef.current.tabSize,
+          insertSpaces: settingsRef.current.insertSpaces,
+        });
+      }
+    }
+
+    // Always restore cursor/scroll on active-tab change, even when the model
+    // was already current (e.g. switching away and back to the same tab).
+    if (activeTab.cursorPosition) {
+      editor.setPosition({
+        lineNumber: activeTab.cursorPosition.lineNumber,
+        column: activeTab.cursorPosition.column,
+      });
+    }
+    if (activeTab.scrollPosition) {
+      editor.setScrollTop(activeTab.scrollPosition.scrollTop);
+      editor.setScrollLeft(activeTab.scrollPosition.scrollLeft);
+    }
+
+    if (modelChanged) {
+      editor.focus();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, activeTab?.modelUri]);
 
-  // Clear or restore diagnostics markers when toggle changes
   useEffect(() => {
-    if (!state.diagnostics) {
-      // Clear all markers on every model
+    if (!diagnosticsEnabled) {
       monaco.editor.getModels().forEach((model) => {
         monaco.editor.setModelMarkers(model, "owner", []);
       });
     }
-  }, [state.diagnostics]);
+  }, [diagnosticsEnabled]);
 
-  // Intercept marker changes when diagnostics are disabled
   useEffect(() => {
-    if (state.diagnostics) return;
+    if (diagnosticsEnabled) return;
     const disposable = monaco.editor.onDidChangeMarkers((uris) => {
       for (const uri of uris) {
         const markers = monaco.editor.getModelMarkers({ resource: uri });
@@ -176,17 +202,16 @@ export default function Editor() {
       }
     });
     return () => disposable.dispose();
-  }, [state.diagnostics]);
+  }, [diagnosticsEnabled]);
 
-  // Sync editor options when settings change
   useEffect(() => {
-    const editor = editorRef.current;
+    const editor = getEditorRef();
     if (!editor) return;
-    const s = state.settings;
+    const s = settings;
     editor.updateOptions({
-      fontSize: state.fontSize,
-      wordWrap: state.wordWrap,
-      minimap: { enabled: state.minimap, side: s.minimapSide },
+      fontSize,
+      wordWrap,
+      minimap: { enabled: minimapEnabled, side: s.minimapSide },
       fontFamily: s.fontFamily || undefined,
       lineHeight: s.lineHeight || 0,
       fontLigatures: s.fontLigatures,
@@ -220,23 +245,18 @@ export default function Editor() {
       autoSurround: s.autoSurround,
     });
 
-    // Push indentation settings to every open model so formatters pick them up.
-    // When detectIndentation is true Monaco auto-detects per file; we only
-    // override models that have no content (new / untitled files) in that case.
     const modelOpts = { tabSize: s.tabSize, insertSpaces: s.insertSpaces };
     monaco.editor.getModels().forEach((model) => {
       if (!s.detectIndentation || model.getValue().length === 0) {
         model.updateOptions(modelOpts);
       }
     });
-  }, [state.fontSize, state.wordWrap, state.minimap, state.settings]);
+  }, [fontSize, wordWrap, minimapEnabled, settings]);
 
-  // Manage file watchers as tabs open and close
   useEffect(() => {
-    const currentIds = new Set(state.tabs.map((t) => t.id));
+    const currentIds = new Set(tabs.map((t) => t.id));
 
-    // Start watcher for newly opened tabs that have a real file path
-    state.tabs.forEach((tab) => {
+    tabs.forEach((tab) => {
       const prevPath = prevTabPathsRef.current.get(tab.id);
       if (prevPath && prevPath !== tab.filePath) {
         unwatchFile(prevPath);
@@ -250,7 +270,6 @@ export default function Editor() {
       }
     });
 
-    // Stop watcher for tabs that were closed
     prevTabIdsRef.current.forEach((id) => {
       if (!currentIds.has(id)) {
         const fp = prevTabPathsRef.current.get(id);
@@ -260,20 +279,19 @@ export default function Editor() {
 
     prevTabIdsRef.current = currentIds;
     const pathMap = new Map<string, string>();
-    state.tabs.forEach((t) => { if (t.filePath) pathMap.set(t.id, t.filePath); });
+    tabs.forEach((t) => { if (t.filePath) pathMap.set(t.id, t.filePath); });
     prevTabPathsRef.current = pathMap;
-  }, [state.tabs, dispatch]);
+  }, [tabs, dispatch]);
 
-  // Clean up all watchers and editor listeners when editor unmounts
   useEffect(() => () => {
     unwatchAll();
     disposablesRef.current.forEach((d) => d.dispose());
     disposablesRef.current = [];
-    editorRef.current = null;
+    setEditorRef(null);
   }, []);
 
   if (!activeTab) {
-    return null; // Welcome screen shown instead
+    return null;
   }
 
   return (
@@ -283,24 +301,22 @@ export default function Editor() {
         beforeMount={handleBeforeMount}
         onMount={handleMount}
         options={{
-          fontSize: state.fontSize,
-          wordWrap: state.wordWrap,
-          minimap: { enabled: state.minimap, side: state.settings.minimapSide },
-          fontFamily: state.settings.fontFamily || undefined,
-          lineHeight: state.settings.lineHeight || 0,
-          fontLigatures: state.settings.fontLigatures,
-          wordWrapColumn: state.settings.wordWrapColumn,
+          fontSize,
+          wordWrap,
+          minimap: { enabled: minimapEnabled, side: settings.minimapSide },
+          fontFamily: settings.fontFamily || undefined,
+          lineHeight: settings.lineHeight || 0,
+          fontLigatures: settings.fontLigatures,
+          wordWrapColumn: settings.wordWrapColumn,
           automaticLayout: true,
-          scrollBeyondLastLine: state.settings.scrollBeyondLastLine,
-          renderWhitespace: state.settings.renderWhitespace,
-          cursorBlinking: state.settings.cursorBlinking,
-          cursorStyle: state.settings.cursorStyle,
-          smoothScrolling: state.settings.smoothScrolling,
+          scrollBeyondLastLine: settings.scrollBeyondLastLine,
+          renderWhitespace: settings.renderWhitespace,
+          cursorBlinking: settings.cursorBlinking,
+          cursorStyle: settings.cursorStyle,
+          smoothScrolling: settings.smoothScrolling,
           padding: { top: 8 },
-          // Bracket & guide features
-          bracketPairColorization: { enabled: state.settings.bracketPairColorization },
-          guides: { bracketPairs: state.settings.showBracketGuides, indentation: state.settings.showBracketGuides },
-          // Completions & IntelliSense
+          bracketPairColorization: { enabled: settings.bracketPairColorization },
+          guides: { bracketPairs: settings.showBracketGuides, indentation: settings.showBracketGuides },
           suggest: {
             showWords: true,
             showSnippets: true,
@@ -308,34 +324,30 @@ export default function Editor() {
             preview: true,
             filterGraceful: true,
           },
-          quickSuggestions: state.settings.quickSuggestions
+          quickSuggestions: settings.quickSuggestions
             ? { other: true, comments: false, strings: true }
             : false,
           quickSuggestionsDelay: 100,
           suggestOnTriggerCharacters: true,
           acceptSuggestionOnCommitCharacter: true,
-          acceptSuggestionOnEnter: state.settings.acceptSuggestionOnEnter,
-          tabCompletion: state.settings.tabCompletion,
-          parameterHints: { enabled: state.settings.parameterHints, cycle: true },
-          // Formatting
-          formatOnPaste: state.settings.formatOnPaste,
-          formatOnType: state.settings.formatOnType,
-          // Editing quality-of-life
-          autoClosingBrackets: state.settings.autoClosingBrackets,
-          autoClosingQuotes: state.settings.autoClosingQuotes,
-          autoSurround: state.settings.autoSurround,
-          matchBrackets: state.settings.matchBrackets,
-          snippetSuggestions: state.settings.snippetSuggestions,
-          // Behaviour
-          tabSize: state.settings.tabSize,
-          detectIndentation: state.settings.detectIndentation,
-          insertSpaces: state.settings.insertSpaces,
-          lineNumbers: state.settings.lineNumbers,
-          folding: state.settings.folding,
-          links: state.settings.links,
+          acceptSuggestionOnEnter: settings.acceptSuggestionOnEnter,
+          tabCompletion: settings.tabCompletion,
+          parameterHints: { enabled: settings.parameterHints, cycle: true },
+          formatOnPaste: settings.formatOnPaste,
+          formatOnType: settings.formatOnType,
+          autoClosingBrackets: settings.autoClosingBrackets,
+          autoClosingQuotes: settings.autoClosingQuotes,
+          autoSurround: settings.autoSurround,
+          matchBrackets: settings.matchBrackets,
+          snippetSuggestions: settings.snippetSuggestions,
+          tabSize: settings.tabSize,
+          detectIndentation: settings.detectIndentation,
+          insertSpaces: settings.insertSpaces,
+          lineNumbers: settings.lineNumbers,
+          folding: settings.folding,
+          links: settings.links,
           contextmenu: true,
-          mouseWheelZoom: state.settings.mouseWheelZoom,
-          // Find
+          mouseWheelZoom: settings.mouseWheelZoom,
           find: { addExtraSpaceOnTop: false, autoFindInSelection: "multiline" },
         }}
       />

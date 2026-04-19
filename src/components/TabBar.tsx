@@ -1,10 +1,14 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { X } from "lucide-react";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { setActiveTab, closeSettings } from "../store/editorSlice";
 import { closeTab, saveFile, saveFileAs } from "../commands/fileOps";
 
 export default function TabBar() {
-  const { state, dispatch } = useEditor();
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const dispatch = useAppDispatch();
+
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -14,29 +18,29 @@ export default function TabBar() {
 
   const handleTabClick = useCallback(
     (tabId: string) => {
-      dispatch({ type: "SET_ACTIVE_TAB", tabId });
+      dispatch(setActiveTab(tabId));
     },
     [dispatch]
   );
 
   const handleClose = useCallback(
-    (e: React.MouseEvent, tabId: string) => {
+    async (e: React.MouseEvent, tabId: string) => {
       e.stopPropagation();
-      const tab = state.tabs.find((t) => t.id === tabId);
+      const tab = tabs.find((t) => t.id === tabId);
       if (!tab) return;
       if (tab.isSettings) {
-        dispatch({ type: "CLOSE_SETTINGS" });
+        dispatch(closeSettings());
       } else {
-        closeTab(tab, dispatch);
+        await closeTab(tab, dispatch);
       }
     },
-    [state, dispatch]
+    [tabs, dispatch]
   );
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, tabId: string) => {
       e.preventDefault();
-      const tab = state.tabs.find((t) => t.id === tabId);
+      const tab = tabs.find((t) => t.id === tabId);
       if (tab?.isSettings) return;
       const menuW = 180;
       const menuH = 160;
@@ -44,45 +48,45 @@ export default function TabBar() {
       const y = Math.min(e.clientY, window.innerHeight - menuH);
       setContextMenu({ x, y, tabId });
     },
-    [state]
+    [tabs]
   );
 
   const handleCloseOthers = useCallback(
     async (tabId: string) => {
-      const others = state.tabs.filter((t) => t.id !== tabId && !t.isSettings);
+      const others = tabs.filter((t) => t.id !== tabId && !t.isSettings);
       for (const tab of others) {
         const closed = await closeTab(tab, dispatch);
         if (!closed) return;
       }
       setContextMenu(null);
     },
-    [state, dispatch]
+    [tabs, dispatch]
   );
 
   const handleCloseAll = useCallback(async () => {
-    for (const tab of [...state.tabs]) {
+    for (const tab of [...tabs]) {
       if (tab.isSettings) {
-        dispatch({ type: "CLOSE_SETTINGS" });
+        dispatch(closeSettings());
       } else {
         const closed = await closeTab(tab, dispatch);
         if (!closed) return;
       }
     }
     setContextMenu(null);
-  }, [state, dispatch]);
+  }, [tabs, dispatch]);
 
   const handleCloseSaved = useCallback(async () => {
-    const saved = state.tabs.filter((t) => !t.isDirty && !t.isSettings);
+    const saved = tabs.filter((t) => !t.isDirty && !t.isSettings);
     for (const tab of saved) {
       const closed = await closeTab(tab, dispatch);
       if (!closed) return;
     }
     setContextMenu(null);
-  }, [state, dispatch]);
+  }, [tabs, dispatch]);
 
   const handleSave = useCallback(
     async (tabId: string) => {
-      const tab = state.tabs.find((t) => t.id === tabId);
+      const tab = tabs.find((t) => t.id === tabId);
       if (tab) {
         if (tab.filePath) {
           await saveFile(tab, dispatch);
@@ -92,54 +96,65 @@ export default function TabBar() {
       }
       setContextMenu(null);
     },
-    [state, dispatch]
+    [tabs, dispatch]
   );
 
-  // Middle-click to close
   const handleMouseDown = useCallback(
-    (e: React.MouseEvent, tabId: string) => {
+    async (e: React.MouseEvent, tabId: string) => {
       if (e.button === 1) {
         e.preventDefault();
-        const tab = state.tabs.find((t) => t.id === tabId);
+        const tab = tabs.find((t) => t.id === tabId);
         if (!tab) return;
         if (tab.isSettings) {
-          dispatch({ type: "CLOSE_SETTINGS" });
+          dispatch(closeSettings());
         } else {
-          closeTab(tab, dispatch);
+          await closeTab(tab, dispatch);
         }
       }
     },
-    [state, dispatch]
+    [tabs, dispatch]
   );
 
-  // Horizontal scroll with mouse wheel
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (tabsRef.current) {
-      tabsRef.current.scrollLeft += e.deltaY;
-    }
+  useEffect(() => {
+    // Register wheel handler non-passively so we can prevent the page from
+    // also scrolling when we consume the event for horizontal tab scroll.
+    const el = tabsRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      const max = el.scrollWidth - el.clientWidth;
+      if (max <= 0) return;
+      const before = el.scrollLeft;
+      el.scrollLeft = Math.max(0, Math.min(max, before + e.deltaY));
+      if (el.scrollLeft !== before) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Scroll the active tab into view whenever the active tab changes
   useEffect(() => {
     if (!tabsRef.current) return;
     const activeEl = tabsRef.current.querySelector(".tab.active") as HTMLElement | null;
     activeEl?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-  }, [state.activeTabId]);
+  }, [activeTabId]);
 
-  // Close context menu on outside click
   const handleOverlayClick = useCallback(() => {
     setContextMenu(null);
   }, []);
 
-  if (state.tabs.length === 0) return null;
+  if (tabs.length === 0) return null;
 
   return (
     <>
-      <div className="tab-bar" ref={tabsRef} onWheel={handleWheel}>
-        {state.tabs.map((tab) => (
+      <div className="tab-bar" ref={tabsRef} role="tablist" aria-label="Open files">
+        {tabs.map((tab) => (
           <div
             key={tab.id}
-            className={`tab ${tab.id === state.activeTabId ? "active" : ""} ${
+            role="tab"
+            aria-selected={tab.id === activeTabId}
+            className={`tab ${tab.id === activeTabId ? "active" : ""} ${
               tab.isDirty ? "dirty" : ""
             }${tab.isSettings ? " tab-settings" : ""}`}
             onClick={() => handleTabClick(tab.id)}
@@ -153,6 +168,7 @@ export default function TabBar() {
               className="tab-close"
               onClick={(e) => handleClose(e, tab.id)}
               title="Close"
+              aria-label={`Close ${tab.fileName}`}
             >
               <X size={14} strokeWidth={2} />
             </button>
@@ -169,9 +185,12 @@ export default function TabBar() {
           >
             <button onClick={() => handleSave(contextMenu.tabId)}>Save</button>
             <button
-              onClick={() => {
-                const tab = state.tabs.find((t) => t.id === contextMenu.tabId);
-                if (tab) closeTab(tab, dispatch);
+              onClick={async () => {
+                const tab = tabs.find((t) => t.id === contextMenu.tabId);
+                if (tab) {
+                  const closed = await closeTab(tab, dispatch);
+                  if (!closed) return;
+                }
                 setContextMenu(null);
               }}
             >

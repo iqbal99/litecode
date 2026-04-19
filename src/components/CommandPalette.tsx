@@ -1,7 +1,14 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as monaco from "monaco-editor";
 import { Database, File, FileCode2, FileJson2, FileText, Palette, Search, Terminal } from "lucide-react";
-import { useEditor } from "../store/editorStore";
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { getEditorRef } from "../store/editorRef";
+import {
+  setActiveTab,
+  setWordWrap,
+  setMinimap,
+  setFontSize,
+} from "../store/editorSlice";
 import {
   newFile,
   openFile,
@@ -12,8 +19,6 @@ import {
 } from "../commands/fileOps";
 import { cycleTheme } from "../commands/theme";
 import { sc } from "../utils/platform";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 type PaletteMode = "file" | "command" | "text";
 
@@ -50,8 +55,6 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
-// ─── Static mode menu ─────────────────────────────────────────────────────────
-
 function getModes(): ModeEntry[] {
   return [
     { id: "goto-file",   label: "Go to File",                tag: "",      shortcut: sc("⌘", "Ctrl").split("+").concat(["P"]) },
@@ -60,8 +63,6 @@ function getModes(): ModeEntry[] {
   ];
 }
 const MODES: ModeEntry[] = getModes();
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function detectMode(query: string): { mode: PaletteMode; term: string } {
   if (query.startsWith(">")) return { mode: "command", term: query.slice(1).trimStart() };
@@ -102,27 +103,31 @@ function getFileIcon(name: string) {
   return <File size={14} aria-hidden />;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export default function CommandPalette({ visible, prefill = "", onClose }: CommandPaletteProps) {
-  const { state, dispatch, editorRef } = useEditor();
+  const tabs = useAppSelector((s) => s.editor.tabs);
+  const activeTabId = useAppSelector((s) => s.editor.activeTabId);
+  const recentFiles = useAppSelector((s) => s.editor.recentFiles);
+  const theme = useAppSelector((s) => s.editor.theme);
+  const wordWrap = useAppSelector((s) => s.editor.wordWrap);
+  const minimapEnabled = useAppSelector((s) => s.editor.minimap);
+  const fontSize = useAppSelector((s) => s.editor.fontSize);
+  const dispatch = useAppDispatch();
 
   const [query, setQuery]       = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef                = useRef<HTMLInputElement>(null);
   const listRef                 = useRef<HTMLDivElement>(null);
-  // Ref mirrors selected state — lets keyboard handler always read the latest value
-  // without being recreated on every selection change.
   const selectedRef             = useRef(0);
+  const jumpTimerRef            = useRef<number | null>(null);
+  const jumpTokenRef            = useRef(0);
 
   const syncSelected = (n: number) => {
     selectedRef.current = n;
     setSelected(n);
   };
 
-  const activeTab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
-
-  // ── Commands ──────────────────────────────────────────────────────────────
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const activeEditorTab = activeTab && !activeTab.isSettings ? activeTab : null;
 
   const appCommands = useMemo<AppCommand[]>(
     () => [
@@ -137,82 +142,89 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
       {
         id: "save", label: "Save", shortcut: sc("⌘,S", "Ctrl,S").split(","),
         action: () => {
-          if (!activeTab) return;
-          activeTab.filePath ? saveFile(activeTab, dispatch) : saveFileAs(activeTab, dispatch);
+          if (!activeEditorTab) return;
+          if (activeEditorTab.filePath) {
+            void saveFile(activeEditorTab, dispatch);
+          } else {
+            void saveFileAs(activeEditorTab, dispatch);
+          }
         },
       },
       {
         id: "save-as", label: "Save As…", shortcut: sc("⇧,⌘,S", "Ctrl,Shift,S").split(","),
-        action: () => { if (activeTab) saveFileAs(activeTab, dispatch); },
+        action: () => {
+          if (activeEditorTab) {
+            void saveFileAs(activeEditorTab, dispatch);
+          }
+        },
       },
       {
         id: "close-tab", label: "Close Editor", shortcut: sc("⌘,W", "Ctrl,W").split(","),
-        action: () => { if (activeTab) closeTab(activeTab, dispatch); },
+        action: () => {
+          if (activeEditorTab) {
+            void closeTab(activeEditorTab, dispatch);
+          }
+        },
       },
       {
         id: "cycle-theme", label: "Toggle Theme",
-        action: () => cycleTheme(state.theme, dispatch),
+        action: () => cycleTheme(theme, dispatch),
       },
       {
         id: "toggle-wordwrap", label: "Toggle Word Wrap",
         action: () => {
-          const next = state.wordWrap === "on" ? "off" : "on";
-          dispatch({ type: "SET_WORD_WRAP", wordWrap: next as "on" | "off" });
+          const next = wordWrap === "on" ? "off" : "on";
+          dispatch(setWordWrap(next as "on" | "off"));
         },
       },
       {
         id: "toggle-minimap", label: "Toggle Minimap",
         action: () => {
-          dispatch({ type: "SET_MINIMAP", minimap: !state.minimap });
+          dispatch(setMinimap(!minimapEnabled));
         },
       },
       {
         id: "increase-font", label: "Increase Font Size", shortcut: sc("⌘,=", "Ctrl,=").split(","),
         action: () => {
-          const next = Math.min(state.fontSize + 1, 72);
-          dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+          dispatch(setFontSize(Math.min(fontSize + 1, 72)));
         },
       },
       {
         id: "decrease-font", label: "Decrease Font Size", shortcut: sc("⌘,-", "Ctrl,-").split(","),
         action: () => {
-          const next = Math.max(state.fontSize - 1, 8);
-          dispatch({ type: "SET_FONT_SIZE", fontSize: next });
+          dispatch(setFontSize(Math.max(fontSize - 1, 8)));
         },
       },
       {
         id: "reset-font", label: "Reset Font Size", shortcut: sc("⌘,0", "Ctrl,0").split(","),
         action: () => {
-          dispatch({ type: "SET_FONT_SIZE", fontSize: 14 });
+          dispatch(setFontSize(14));
         },
       },
       {
         id: "format-document", label: "Format Document", shortcut: sc("⇧,⌥,F", "Shift,Alt,F").split(","),
         action: () => {
-          const editor = editorRef.current;
-          editor?.getAction("editor.action.formatDocument")?.run();
+          getEditorRef()?.getAction("editor.action.formatDocument")?.run();
         },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.theme, state.wordWrap, state.minimap, state.fontSize, activeTab, dispatch, editorRef]
+    [theme, wordWrap, minimapEnabled, fontSize, activeEditorTab, dispatch]
   );
-
-  // ── Derived / filtered lists ───────────────────────────────────────────────
 
   const { mode, term } = useMemo(() => detectMode(query), [query]);
   const showModes      = query === "";
 
   const fileItems = useMemo<FileItem[]>(() => {
-    const open: FileItem[] = state.tabs
+    const open: FileItem[] = tabs
       .filter((t) => t.filePath)
       .map((t) => ({ label: t.fileName, path: t.filePath!, kind: "open" }));
     const openPaths = new Set(open.map((i) => i.path));
-    const recent: FileItem[] = state.recentFiles
+    const recent: FileItem[] = recentFiles
       .filter((p) => !openPaths.has(p))
       .map((p) => ({ label: basename(p), path: p, kind: "recent" }));
     return [...open, ...recent];
-  }, [state.tabs, state.recentFiles]);
+  }, [tabs, recentFiles]);
 
   const filteredFiles = useMemo<FileItem[]>(() => {
     if (!term) return fileItems.slice(0, 12);
@@ -232,7 +244,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     if (mode !== "text" || !term) return [];
     const q = term.toLowerCase();
     const results: TextResult[] = [];
-    for (const tab of state.tabs) {
+    for (const tab of tabs) {
       const m = monaco.editor.getModel(monaco.Uri.parse(tab.modelUri));
       if (!m) continue;
       const lines = m.getLinesContent();
@@ -249,9 +261,8 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
       }
     }
     return results;
-  }, [mode, term, state.tabs]);
+  }, [mode, term, tabs]);
 
-  // Total navigable item count
   const totalItems = useMemo(() => {
     if (showModes)          return MODES.length + Math.min(filteredFiles.length, 6);
     if (mode === "command") return filteredCommands.length;
@@ -259,28 +270,55 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     return filteredFiles.length;
   }, [showModes, mode, filteredFiles.length, filteredCommands.length, textResults.length]);
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  const previousActiveRef = useRef<HTMLElement | null>(null);
+  const focusTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (visible) {
+      previousActiveRef.current = document.activeElement as HTMLElement | null;
       setQuery(prefill);
       syncSelected(0);
-      setTimeout(() => inputRef.current?.focus(), 30);
+      if (focusTimerRef.current != null) {
+        window.clearTimeout(focusTimerRef.current);
+      }
+      focusTimerRef.current = window.setTimeout(() => {
+        inputRef.current?.focus();
+        focusTimerRef.current = null;
+      }, 30);
+    } else {
+      // Return focus to the element that opened the palette.
+      const prev = previousActiveRef.current;
+      if (prev && typeof prev.focus === "function") {
+        prev.focus();
+      }
     }
+    return () => {
+      if (focusTimerRef.current != null) {
+        window.clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
   }, [visible, prefill]);
 
-  // Reset selection whenever the query (and therefore the list) changes
   useEffect(() => { syncSelected(0); }, [query]);
 
-  // Auto-scroll selected item into view
+  useEffect(() => {
+    // Clamp the selection if the current list shrinks while the palette stays open.
+    if (totalItems === 0) {
+      if (selectedRef.current !== 0) syncSelected(0);
+      return;
+    }
+    if (selectedRef.current >= totalItems) {
+      syncSelected(totalItems - 1);
+    }
+  }, [totalItems]);
+
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
     const item = list.querySelector<HTMLElement>(".cp-selected");
     item?.scrollIntoView({ block: "nearest" });
   }, [selected]);
-
-  // ── Actions ────────────────────────────────────────────────────────────────
 
   const runFile = useCallback((item: FileItem) => {
     onClose();
@@ -293,24 +331,38 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
   }, [onClose]);
 
   const runTextResult = useCallback((result: TextResult) => {
+    jumpTokenRef.current += 1;
+    const jumpToken = jumpTokenRef.current;
+    if (jumpTimerRef.current != null) {
+      window.clearTimeout(jumpTimerRef.current);
+      jumpTimerRef.current = null;
+    }
     onClose();
     const targetTabId = result.tabId;
     const targetLine = result.lineNumber;
     requestAnimationFrame(() => {
-      dispatch({ type: "SET_ACTIVE_TAB", tabId: targetTabId });
-      setTimeout(() => {
-        const ed = editorRef.current;
+      dispatch(setActiveTab(targetTabId));
+      jumpTimerRef.current = window.setTimeout(() => {
+        if (jumpTokenRef.current !== jumpToken) return;
+        const ed = getEditorRef();
         if (ed) {
           ed.revealLineInCenter(targetLine);
           ed.setPosition({ lineNumber: targetLine, column: 1 });
           ed.focus();
         }
+        jumpTimerRef.current = null;
       }, 80);
     });
-  }, [dispatch, editorRef, onClose]);
+  }, [dispatch, onClose]);
 
-  // Activate a mode entry: if it has a prefix-tag, switch to that mode;
-  // if it's "goto-file" (no tag) we're already in file mode — do nothing special.
+  useEffect(() => {
+    return () => {
+      if (jumpTimerRef.current != null) {
+        window.clearTimeout(jumpTimerRef.current);
+      }
+    };
+  }, []);
+
   const runMode = useCallback((m: ModeEntry) => {
     if (m.tag) {
       setQuery(m.tag);
@@ -318,7 +370,6 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
     }
   }, []);
 
-  // Activate whichever item is currently selected
   const activateSelected = useCallback(() => {
     const idx = selectedRef.current;
 
@@ -344,13 +395,10 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
       return;
     }
 
-    // file mode
     const fi = filteredFiles[idx];
     if (fi) runFile(fi);
   }, [showModes, mode, filteredFiles, filteredCommands, textResults,
       runFile, runCommand, runMode, runTextResult]);
-
-  // ── Keyboard handler ───────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     switch (e.key) {
@@ -378,8 +426,6 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
 
   if (!visible) return null;
 
-  // ── Render helpers ─────────────────────────────────────────────────────────
-
   const kbd = (keys?: string[]) =>
     keys ? (
       <span className="cp-shortcut">
@@ -389,9 +435,14 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
 
   return (
     <div className="cp-overlay" onClick={onClose}>
-      <div className="cp-panel" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="cp-panel"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+      >
 
-        {/* ── Input row ── */}
         <div className="cp-input-row">
           <Search className="cp-search-icon" size={16} aria-hidden />
           <input
@@ -402,12 +453,15 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="cp-listbox"
+            aria-autocomplete="list"
           />
         </div>
 
-        <div className="cp-list" ref={listRef}>
+        <div className="cp-list" ref={listRef} id="cp-listbox" role="listbox">
 
-          {/* ── Default (empty query): mode menu + recent files ── */}
           {showModes && (
             <>
               {MODES.map((m, i) => (
@@ -430,7 +484,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
                     const globalIdx = MODES.length + i;
                     return (
                       <div
-                        key={f.path}
+                        key={`${f.kind}:${f.path}:${i}`}
                         className={`cp-item${globalIdx === selected ? " cp-selected" : ""}`}
                         onClick={() => runFile(f)}
                         onMouseEnter={() => syncSelected(globalIdx)}
@@ -447,7 +501,6 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
             </>
           )}
 
-          {/* ── Command mode (>) ── */}
           {!showModes && mode === "command" && (
             <>
               {filteredCommands.length === 0 && (
@@ -467,7 +520,6 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
             </>
           )}
 
-          {/* ── File search mode ── */}
           {!showModes && mode === "file" && (
             <>
               {filteredFiles.length === 0 && (
@@ -475,7 +527,7 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
               )}
               {filteredFiles.map((f, i) => (
                 <div
-                  key={f.path}
+                  key={`${f.kind}:${f.path}:${i}`}
                   className={`cp-item${i === selected ? " cp-selected" : ""}`}
                   onClick={() => runFile(f)}
                   onMouseEnter={() => syncSelected(i)}
@@ -489,7 +541,6 @@ export default function CommandPalette({ visible, prefill = "", onClose }: Comma
             </>
           )}
 
-          {/* ── Text search mode (%) ── */}
           {!showModes && mode === "text" && (
             <>
               {!term && (
